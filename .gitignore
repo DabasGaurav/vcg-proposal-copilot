@@ -1,0 +1,10 @@
+.venv/
+.data/
+.chroma/
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+.streamlit/secrets.toml
+*.egg-info/
+.DS_Store

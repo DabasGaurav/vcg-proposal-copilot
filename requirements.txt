@@ -1,0 +1,20 @@
+# Core / runtime (required by the Streamlit app + pipeline + deterministic demo)
+pydantic>=2,<3
+numpy
+scikit-learn          # TF-IDF retrieval + cosine similarity (offline-safe default)
+streamlit
+pandas
+jinja2                # pandas Styler (coloured traceability matrix in the UI)
+python-docx           # DOCX export (best-effort)
+pypdf                 # PDF RFP ingestion
+pytest                # test suite
+
+# Test-only (not needed to run the app)
+# fpdf2               # tests/test_pdf_intake.py generates a real PDF
+
+# Optional / Should-have (import-guarded, not required for the core demo)
+# litellm             # real LLM extraction/drafting/claim-decomposition (LLM_PROVIDER=litellm)
+# sentence-transformers  # all-MiniLM-L6-v2 embeddings (EMBEDDINGS_BACKEND=sentence-transformers)
+# chromadb            # persistent vector KB (VECTORSTORE_BACKEND=chroma)
+# tavily-python       # web enrichment provider (WEB_SEARCH_PROVIDER=tavily)
+# duckduckgo-search   # web enrichment provider (WEB_SEARCH_PROVIDER=ddg)
