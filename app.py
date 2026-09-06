@@ -21,7 +21,8 @@ from pipeline.traceability import evidence_display_id
 from services.persistence import get_store
 from services.vectorstore import VectorStore
 
-st.set_page_config(page_title="VCG Proposal Copilot", layout="wide")
+st.set_page_config(page_title="VCG Proposal Copilot", layout="wide",
+                   page_icon="📝", initial_sidebar_state="expanded")
 config.ensure_dirs()
 
 
@@ -38,16 +39,48 @@ STATUS_ICON = {
     "SUPPORTED": "🟢", "PARTIAL": "🟡", "GAP": "🔴", "FORWARD_LOOKING": "🔵",
 }
 
+st.markdown(
+    """
+    <style>
+      #MainMenu, footer, [data-testid="stToolbar"] {visibility: hidden;}
+      .block-container {padding-top: 2.4rem; max-width: 1180px;}
+      html, body, [class*="css"], h1, h2, h3 {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+      .eyebrow {letter-spacing:.14em; text-transform:uppercase; font-size:.72rem;
+                font-weight:700; color:#c0392b;}
+      .hero-h1 {font-size:2.5rem; line-height:1.12; font-weight:800; margin:.35rem 0 .6rem;
+                letter-spacing:-.02em;}
+      .hero-sub {font-size:1.06rem; color:#3c4450; max-width:44rem; line-height:1.55;}
+      .card {border:1px solid #e7e9ee; border-radius:14px; padding:1.05rem 1.15rem;
+             background:#fff; height:100%;}
+      .card h4 {margin:.1rem 0 .35rem; font-size:1rem; font-weight:700;}
+      .card p {margin:0; color:#54606e; font-size:.9rem; line-height:1.5;}
+      .flow {display:flex; flex-wrap:wrap; gap:.4rem; margin:.2rem 0 .2rem;}
+      .flow span {background:#f2f4f7; border:1px solid #e7e9ee; border-radius:999px;
+                  padding:.28rem .7rem; font-size:.8rem; color:#414b57; white-space:nowrap;}
+      .flow span.gate {background:#fdecea; border-color:#f5c6c0; color:#a5342a; font-weight:600;}
+      .cta {margin-top:1rem; font-size:.95rem; color:#1b1f24;}
+      .cta b {color:#c0392b;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 # --------------------------------------------------------------------------- #
 # Sidebar -- pick / upload an RFP and run the pipeline
 # --------------------------------------------------------------------------- #
 with st.sidebar:
-    st.header("Run")
+    st.markdown("### 📝 Proposal Copilot")
+    st.caption("RFP → source-grounded, review-ready proposal")
+    st.divider()
     fixtures = sorted(p.name for p in config.FIXTURE_DIR.glob("*.md"))
-    choice = st.selectbox("Demo RFP fixture", fixtures)
-    uploaded = st.file_uploader("…or upload an RFP", type=["md", "txt", "pdf"])
-    web = st.checkbox("Enable web enrichment (background only)", value=False)
+    choice = st.selectbox("Demo RFP", fixtures,
+                          help="Four scenarios: happy path, capability gap, "
+                               "procurement-heavy, and no evaluation rubric.")
+    uploaded = st.file_uploader("…or upload your own RFP", type=["md", "txt", "pdf"])
+    web = st.checkbox("Web enrichment (industry context only)", value=False)
 
     if st.button("▶ Run pipeline", type="primary", use_container_width=True):
         if uploaded is not None:
@@ -92,21 +125,58 @@ with st.sidebar:
 
 state = st.session_state.get("state")
 if not state:
-    st.title("VCG Proposal Copilot")
-    st.info("Pick a demo RFP in the sidebar and press **Run pipeline**.")
     st.markdown(
-        "- **18 % passes, 35 % is caught** — that single moment is the demo.\n"
-        "- Verification is deterministic (numeric / attribution / context rules), "
-        "never an LLM judging its own output.\n"
-        "- No code path exports a proposal without human approval of every section."
+        """
+        <div class="eyebrow">VCG · Proposal Copilot</div>
+        <div class="hero-h1">Every claim in the proposal,<br>traceable to its source.</div>
+        <div class="hero-sub">
+          Drop in an RFP. Get a review-ready draft where every factual statement links
+          to the exact evidence it came from — and any claim the evidence doesn't
+          support is flagged before a partner ever sees it.
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
+    st.write("")
+    c1, c2, c3 = st.columns(3)
+    c1.markdown(
+        '<div class="card"><h4>Requirement → Evidence → Draft</h4>'
+        '<p>A live traceability matrix. Click any sentence and see the RFP line it '
+        'answers, the source chunk it was written from, and the candidates that were '
+        'rejected — with reasons.</p></div>', unsafe_allow_html=True)
+    c2.markdown(
+        '<div class="card"><h4>Deterministic verification</h4>'
+        '<p>Numeric, attribution and geography/industry checks — rule-based, not an '
+        'LLM grading its own output. A contradicted number can never pass as '
+        '“supported”.</p></div>', unsafe_allow_html=True)
+    c3.markdown(
+        '<div class="card"><h4>Human approval gate</h4>'
+        '<p>No code path reaches an export without a reviewer approving every section. '
+        'Unsupported claims block the export until resolved or overridden with a '
+        'recorded reason.</p></div>', unsafe_allow_html=True)
+
+    st.write("")
+    st.markdown(
+        '<div class="flow">'
+        '<span>RFP</span><span>extract + validate</span><span>retrieve evidence</span>'
+        '<span>rank / reject</span><span>draft</span><span>decompose claims</span>'
+        '<span>verify</span><span>traceability</span>'
+        '<span class="gate">human review</span><span>export</span>'
+        '</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="cta">← Pick a demo RFP in the sidebar and press '
+        '<b>Run pipeline</b>. Try <b>abc_bank_lending_transformation</b> first — '
+        'it contains a claim the evidence can\'t support.</div>',
+        unsafe_allow_html=True)
     st.stop()
 
 _rs = state.get("review_status", "PENDING")
-st.title(f"VCG Proposal Copilot · {state['rfp_data'].client or '—'}")
+_client = (state["rfp_data"].client or "Untitled RFP").rstrip(".")
+st.markdown(f'<div class="eyebrow">Proposal · review status {_rs}</div>'
+            f'<div class="hero-h1" style="font-size:1.9rem;margin:.2rem 0 .5rem;">{_client}</div>',
+            unsafe_allow_html=True)
 st.caption(
-    f"run `{state['run_id'][:12]}` · {st.session_state.get('rfp_name','')} · "
-    f"review status **{_rs}** · "
+    f"`{st.session_state.get('rfp_name','')}` · run `{state['run_id'][:12]}` · "
     f"{len(state['checklist'])} evidence needs · "
     f"{len(state['procedural_checklist'])} procedural items · "
     f"{sum(1 for e in state['overall_traceability'] if e.verification_status.value=='GAP')} GAP rows"
