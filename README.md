@@ -1,17 +1,22 @@
-# VCG Proposal Copilot Agent
+# Proposal Copilot Agent
+
+**▶ Live demo: <https://rfp-proposal.streamlit.app/>** — no install, no API key.
+Pick `abc_bank_lending_transformation`, press **Run pipeline**, open the
+**Traceability** tab.
 
 Turns an inbound RFP into a source-grounded, review-ready proposal with full
 **Requirement → Evidence → Draft** traceability, **deterministic** (non-LLM-judged)
 evidence-consistency verification, and a hard architectural gate that requires
 human approval of every section before any export.
 
-Built to the spec in [`SPEC.md`](SPEC.md). **Core + Should-have + selected
-Stretch** are implemented: end-to-end pipeline (RFP → approved proposal),
-traceability matrix, deterministic verifier, Streamlit hero screen, section-level
-approval with edit preservation, SQLite audit log, conflict detection, run
-resumability, real-LLM path (LiteLLM), optional web enrichment (Tavily / DDG),
-Phase-0 calibration that writes thresholds to `.env`, and Markdown / CSV / DOCX
-export. 70 tests, all green.
+Built to the spec in [`SPEC.md`](SPEC.md) (a VCG case brief — "VCG" is a
+fictional firm; the corpus and RFP fixtures are synthetic). **Core + Should-have
++ selected Stretch** are implemented: end-to-end pipeline (RFP → approved
+proposal), traceability matrix, deterministic verifier, Streamlit hero screen,
+section-level approval with edit preservation, SQLite audit log, conflict
+detection, run resumability, real-LLM path (LiteLLM), optional web enrichment
+(Tavily / DDG), Phase-0 calibration that writes thresholds to `.env`, and
+Markdown / CSV / DOCX export. **70 tests, all green.**
 
 ## The hero moment
 
