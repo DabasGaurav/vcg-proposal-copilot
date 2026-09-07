@@ -1,19 +1,25 @@
-"""VCG Proposal Copilot -- Streamlit hero screen (SPEC Phase 7).
+"""Proposal Copilot -- Streamlit front end (SPEC Phase 7).
 
-Tabs, in the order the spec asks for:
-    RFP -> Requirements -> Execution -> Evidence -> Draft -> Traceability -> Review
+Tabs:
+    Overview -> Traceability -> Evidence -> Draft -> Requirements -> Execution -> Review
 
-The Traceability tab is the point of the demo: for any claim, the full
-Requirement -> exact RFP quote -> why this evidence (and why the rejected ones
-were rejected) -> exact source chunk -> deterministic verifier result -> human
-decision chain is inspectable, not narrated.
+Overview answers "what happened, and is this safe to send?".
+Traceability is the proof: for any claim, the full Requirement -> exact RFP quote
+-> why this evidence (and why the rejected ones were rejected) -> exact source
+chunk -> deterministic verifier result -> human decision chain, inspectable
+rather than narrated.
+
+Presentation tokens and components live in ui.py.
 """
 from __future__ import annotations
+
+from collections import Counter
 
 import pandas as pd
 import streamlit as st
 
 import config
+import ui
 from models.schemas import ReviewDecision, VerificationStatus
 from pipeline import export, review
 from pipeline.graph import load_run, run_pipeline
@@ -21,7 +27,7 @@ from pipeline.traceability import evidence_display_id
 from services.persistence import get_store
 from services.vectorstore import VectorStore
 
-st.set_page_config(page_title="VCG Proposal Copilot", layout="wide",
+st.set_page_config(page_title="Proposal Copilot", layout="wide",
                    page_icon="📝", initial_sidebar_state="expanded")
 config.ensure_dirs()
 
@@ -34,55 +40,26 @@ def _bootstrap():
 
 
 _bootstrap()
-
-STATUS_ICON = {
-    "SUPPORTED": "🟢", "PARTIAL": "🟡", "GAP": "🔴", "FORWARD_LOOKING": "🔵",
-}
-
-st.markdown(
-    """
-    <style>
-      #MainMenu, footer, [data-testid="stToolbar"] {visibility: hidden;}
-      .block-container {padding-top: 2.4rem; max-width: 1180px;}
-      html, body, [class*="css"], h1, h2, h3 {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      }
-      .eyebrow {letter-spacing:.14em; text-transform:uppercase; font-size:.72rem;
-                font-weight:700; color:#c0392b;}
-      .hero-h1 {font-size:2.5rem; line-height:1.12; font-weight:800; margin:.35rem 0 .6rem;
-                letter-spacing:-.02em;}
-      .hero-sub {font-size:1.06rem; color:#3c4450; max-width:44rem; line-height:1.55;}
-      .card {border:1px solid #e7e9ee; border-radius:14px; padding:1.05rem 1.15rem;
-             background:#fff; height:100%;}
-      .card h4 {margin:.1rem 0 .35rem; font-size:1rem; font-weight:700;}
-      .card p {margin:0; color:#54606e; font-size:.9rem; line-height:1.5;}
-      .flow {display:flex; flex-wrap:wrap; gap:.4rem; margin:.2rem 0 .2rem;}
-      .flow span {background:#f2f4f7; border:1px solid #e7e9ee; border-radius:999px;
-                  padding:.28rem .7rem; font-size:.8rem; color:#414b57; white-space:nowrap;}
-      .flow span.gate {background:#fdecea; border-color:#f5c6c0; color:#a5342a; font-weight:600;}
-      .cta {margin-top:1rem; font-size:.95rem; color:#1b1f24;}
-      .cta b {color:#c0392b;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown(ui.CSS, unsafe_allow_html=True)
+H = {"unsafe_allow_html": True}
 
 
 # --------------------------------------------------------------------------- #
-# Sidebar -- pick / upload an RFP and run the pipeline
+# Sidebar
 # --------------------------------------------------------------------------- #
 with st.sidebar:
     st.markdown("### 📝 Proposal Copilot")
     st.caption("RFP → source-grounded, review-ready proposal")
     st.divider()
+
     fixtures = sorted(p.name for p in config.FIXTURE_DIR.glob("*.md"))
     choice = st.selectbox("Demo RFP", fixtures,
                           help="Four scenarios: happy path, capability gap, "
-                               "procurement-heavy, and no evaluation rubric.")
+                               "procurement-heavy, and an RFP with no evaluation rubric.")
     uploaded = st.file_uploader("…or upload your own RFP", type=["md", "txt", "pdf"])
     web = st.checkbox("Web enrichment (industry context only)", value=False)
 
-    if st.button("▶ Run pipeline", type="primary", use_container_width=True):
+    if st.button("▶  Run pipeline", type="primary", use_container_width=True):
         if uploaded is not None:
             dest = config.DATA_DIR / f"upload_{uploaded.name}"
             dest.write_bytes(uploaded.getbuffer())
@@ -93,27 +70,29 @@ with st.sidebar:
             try:
                 st.session_state.state = run_pipeline(rfp_path, web_search=web)
                 st.session_state.rfp_name = choice if uploaded is None else uploaded.name
-            except Exception as exc:  # keep the app usable on failure
+            except Exception as exc:                       # keep the app usable
                 st.session_state.state = None
                 st.error(f"Pipeline failed: {exc}")
 
     if st.session_state.get("state"):
         s = st.session_state.state
         d = s["proposal_draft"]
-        st.metric("Supported / Partial / Gap",
-                  f"{d.supported_claim_count} / {d.partial_claim_count} / {d.gap_claim_count}")
-        st.caption(f"run_id {s['run_id'][:12]} · {len(s['overall_traceability'])} matrix rows")
+        st.markdown(
+            f'<div class="pills">{ui.pill("SUPPORTED", str(d.supported_claim_count))}'
+            f'{ui.pill("PARTIAL", str(d.partial_claim_count))}'
+            f'{ui.pill("GAP", str(d.gap_claim_count))}</div>', **H)
+        st.caption(f"run `{s['run_id'][:12]}` · {len(s['overall_traceability'])} matrix rows")
 
     st.divider()
-    st.subheader("Resume a run")
+    st.markdown("**Resume a run**")
     try:
         prev = get_store().list_runs()
     except Exception:
         prev = []
     if prev:
         pick = st.selectbox("Persisted runs", [r["run_id"] for r in prev],
-                            format_func=lambda r: f"{r[:12]}…")
-        if st.button("↺ Load run", use_container_width=True):
+                            format_func=lambda r: f"{r[:12]}…", label_visibility="collapsed")
+        if st.button("↺  Load run", use_container_width=True):
             try:
                 st.session_state.state = load_run(pick)
                 st.session_state.rfp_name = st.session_state.state.get("rfp_filename", pick)
@@ -123,6 +102,10 @@ with st.sidebar:
     else:
         st.caption("No persisted runs yet.")
 
+
+# --------------------------------------------------------------------------- #
+# Landing (no run yet)
+# --------------------------------------------------------------------------- #
 state = st.session_state.get("state")
 if not state:
     st.markdown(
@@ -134,26 +117,24 @@ if not state:
           to the exact evidence it came from — and any claim the evidence doesn't
           support is flagged before a partner ever sees it.
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        """, **H)
     st.write("")
     c1, c2, c3 = st.columns(3)
     c1.markdown(
         '<div class="card"><h4>Requirement → Evidence → Draft</h4>'
         '<p>A live traceability matrix. Click any sentence and see the RFP line it '
         'answers, the source chunk it was written from, and the candidates that were '
-        'rejected — with reasons.</p></div>', unsafe_allow_html=True)
+        'rejected — with reasons.</p></div>', **H)
     c2.markdown(
         '<div class="card"><h4>Deterministic verification</h4>'
-        '<p>Numeric, attribution and geography/industry checks — rule-based, not an '
-        'LLM grading its own output. A contradicted number can never pass as '
-        '“supported”.</p></div>', unsafe_allow_html=True)
+        '<p>Numeric, attribution and geography checks — rule-based, not an LLM '
+        'grading its own output. A contradicted number can never pass as '
+        '“supported”.</p></div>', **H)
     c3.markdown(
         '<div class="card"><h4>Human approval gate</h4>'
-        '<p>No code path reaches an export without a reviewer approving every section. '
-        'Unsupported claims block the export until resolved or overridden with a '
-        'recorded reason.</p></div>', unsafe_allow_html=True)
+        '<p>No code path reaches an export without a reviewer approving every '
+        'section. Unsupported claims block the export until resolved or overridden '
+        'with a recorded reason.</p></div>', **H)
 
     st.write("")
     st.markdown(
@@ -161,119 +142,237 @@ if not state:
         '<span>RFP</span><span>extract + validate</span><span>retrieve evidence</span>'
         '<span>rank / reject</span><span>draft</span><span>decompose claims</span>'
         '<span>verify</span><span>traceability</span>'
-        '<span class="gate">human review</span><span>export</span>'
-        '</div>', unsafe_allow_html=True)
+        '<span class="gate">human review</span><span>export</span></div>', **H)
     st.markdown(
         '<div class="cta">← Pick a demo RFP in the sidebar and press '
         '<b>Run pipeline</b>. Try <b>abc_bank_lending_transformation</b> first — '
-        'it contains a claim the evidence can\'t support.</div>',
-        unsafe_allow_html=True)
+        'it contains a claim the evidence can\'t support.</div>', **H)
     st.stop()
 
-_rs = state.get("review_status", "PENDING")
+
+# --------------------------------------------------------------------------- #
+# Derived figures used across tabs
+# --------------------------------------------------------------------------- #
+draft = state["proposal_draft"]
+entries = state["overall_traceability"]
+summary = state.get("requirement_summary", [])
+export_ok, export_reasons = review.can_export(state)
+
+n_selected = sum(len(v) for k, v in state["selected_evidence"].items() if k != "__pool__")
+n_rejected = sum(len(v) for v in state["rejected_evidence"].values())
+n_gap_rows = sum(1 for e in entries if e.verification_status == VerificationStatus.GAP)
+n_approved = sum(1 for s in draft.sections if s.review_status == ReviewDecision.APPROVED)
+coverage = Counter(s["rollup_status"] for s in summary)
+usage = Counter(evidence_display_id(e.matched_evidence_id)
+                for e in entries if e.matched_evidence_id)
+
 _client = (state["rfp_data"].client or "Untitled RFP").rstrip(".")
-st.markdown(f'<div class="eyebrow">Proposal · review status {_rs}</div>'
-            f'<div class="hero-h1" style="font-size:1.9rem;margin:.2rem 0 .5rem;">{_client}</div>',
-            unsafe_allow_html=True)
-st.caption(
-    f"`{st.session_state.get('rfp_name','')}` · run `{state['run_id'][:12]}` · "
-    f"{len(state['checklist'])} evidence needs · "
-    f"{len(state['procedural_checklist'])} procedural items · "
-    f"{sum(1 for e in state['overall_traceability'] if e.verification_status.value=='GAP')} GAP rows"
+st.markdown(
+    f'<div class="eyebrow">Proposal · review status {state.get("review_status","PENDING")}</div>'
+    f'<div class="hero-h1" style="font-size:1.95rem;margin:.2rem 0 .45rem;">{_client}</div>', **H)
+st.caption(f"`{st.session_state.get('rfp_name','')}` · run `{state['run_id'][:12]}` · "
+           f"{len(state['checklist'])} evidence needs · "
+           f"{len(state['procedural_checklist'])} procedural items")
+
+tab_over, tab_trace, tab_ev, tab_draft, tab_req, tab_exec, tab_review = st.tabs(
+    ["📊  Overview", "🎯  Traceability", "Evidence", "Draft",
+     "Requirements", "Execution", "✅  Review"]
 )
 
-tab_rfp, tab_req, tab_exec, tab_ev, tab_draft, tab_trace, tab_review = st.tabs(
-    ["RFP", "Requirements", "Execution", "Evidence", "Draft", "🎯 Traceability", "Review"]
-)
 
 # --------------------------------------------------------------------------- #
-# RFP
+# Overview -- the reporting dashboard
 # --------------------------------------------------------------------------- #
-with tab_rfp:
-    st.subheader(st.session_state.get("rfp_name", "RFP"))
-    rd = state["rfp_data"]
-    c1, c2, c3 = st.columns(3)
-    c1.markdown(f"**Client**\n\n{rd.client or '—'}")
-    c2.markdown(f"**Timeline**\n\n{rd.timeline or '—'}")
-    c3.markdown(f"**Procedural items**\n\n{len(state['procedural_checklist'])}")
-    st.markdown(f"**Problem statement**\n\n{rd.problem_statement or '—'}")
-    with st.expander("Raw RFP text"):
-        st.text(state["rfp_raw_text"])
+with tab_over:
+    st.markdown(
+        ui.verdict(
+            export_ok,
+            "Cleared for export" if export_ok
+            else "Not cleared for export",
+            "Every section approved and no unresolved gaps."
+            if export_ok else " · ".join(export_reasons),
+        ), **H)
+    st.write("")
 
+    st.markdown(ui.tiles([
+        ("Requirements", len(summary), "extracted & validated", ui.BRAND),
+        ("Claims verified", len(draft.overall_traceability), "atomic, independently checked", ui.BRAND),
+        ("Supported", draft.supported_claim_count, "evidence confirmed",
+         ui.STATUS["SUPPORTED"]["fill"]),
+        ("Gaps", n_gap_rows, "block export until resolved", ui.STATUS["GAP"]["fill"]),
+        ("Sections approved", f"{n_approved}/{len(draft.sections)}", "human sign-off",
+         ui.STATUS["SUPPORTED"]["fill"] if n_approved == len(draft.sections)
+         else ui.STATUS["PARTIAL"]["fill"]),
+        ("Evidence", f"{n_selected}", f"selected · {n_rejected} rejected", ui.MUTED),
+    ]), **H)
 
-# --------------------------------------------------------------------------- #
-# Requirements
-# --------------------------------------------------------------------------- #
-with tab_req:
-    rd = state["rfp_data"]
-    if rd.warnings:
-        for w in rd.warnings:
-            st.warning(w)
-    if state["requirement_validation_errors"]:
-        st.error("Ungrounded requirements were dropped (source quote not locatable):")
-        for e in state["requirement_validation_errors"]:
-            st.write("• ", e)
+    st.write("")
+    left, right = st.columns([1.15, 1])
 
-    st.markdown("#### Extracted requirements (each traced to its source quote)")
-    rows = [
-        {
-            "id": r.requirement_id, "requirement": r.text,
-            "category": r.category.value, "handling": r.handling.value,
-            "mandatory": r.mandatory, "confidence": round(r.extraction_confidence, 2),
-            "source quote": r.source_span.quote,
-        }
-        for r in rd.requirements
-    ]
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    with left:
+        st.markdown('<div class="sec-h">Requirement coverage</div>', **H)
+        chart = ui.coverage_bar(coverage)
+        if chart is not None:
+            st.altair_chart(chart, use_container_width=True)
+        st.markdown(
+            '<div class="pills">' + "".join(
+                ui.pill(k, f"{ui.STATUS[k]['label']} · {coverage[k]}")
+                for k in ui.STATUS_ORDER if coverage.get(k)
+            ) + "</div>", **H)
+        st.caption("How every requirement extracted from the RFP resolved. "
+                   "“Not addressed” means no claim was drafted for it.")
 
-    cols = st.columns(2)
-    with cols[0]:
-        st.markdown("#### Procedural checklist (never becomes prose)")
-        for p in state["procedural_checklist"]:
-            st.checkbox(p, key=f"proc_{p[:30]}", value=False)
-    with cols[1]:
-        st.markdown("#### Needs human input")
-        for h in state["human_input_requirements"] or ["—"]:
-            st.write("• ", h)
-        caps = [r.text for r in rd.requirements if r.handling.value == "CAPABILITY_GAP"]
-        if caps:
-            st.markdown("#### ⚠️ Capability gaps (go / no-go)")
-            for c in caps:
-                st.write("• ", c)
+    with right:
+        st.markdown('<div class="sec-h">Evidence actually cited</div>', **H)
+        chart = ui.evidence_bar(usage)
+        if chart is not None:
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.caption("No evidence was cited by any claim.")
+        st.caption(f"{n_selected} chunks cleared the ranker; {n_rejected} were rejected "
+                   f"with a written reason (see the Evidence tab).")
 
+    st.write("")
+    st.markdown('<div class="sec-h">Section readiness</div>', **H)
+    rows = []
+    for s in draft.sections:
+        sec_status = "GAP" if s.has_gaps else "SUPPORTED"
+        rows.append(
+            f'<tr><td style="padding:.42rem .7rem;border-bottom:1px solid {ui.LINE}">'
+            f'<b>{s.title}</b>{" ✏️" if s.human_edited else ""}</td>'
+            f'<td style="padding:.42rem .7rem;border-bottom:1px solid {ui.LINE};'
+            f'text-align:right;color:{ui.INK_2}">{len(s.claim_ids)}</td>'
+            f'<td style="padding:.42rem .7rem;border-bottom:1px solid {ui.LINE}">'
+            f'{ui.pill(sec_status, "contains a gap" if s.has_gaps else "clean")}</td>'
+            f'<td style="padding:.42rem .7rem;border-bottom:1px solid {ui.LINE}">'
+            f'{ui.pill("SUPPORTED" if s.review_status == ReviewDecision.APPROVED else "NO_ROW", s.review_status.value.title())}'
+            f'</td></tr>')
+    st.markdown(
+        f'<table style="width:100%;border-collapse:collapse;font-size:.88rem">'
+        f'<tr><th style="text-align:left;padding:.3rem .7rem;font-size:.72rem;'
+        f'letter-spacing:.06em;text-transform:uppercase;color:{ui.MUTED}">Section</th>'
+        f'<th style="text-align:right;padding:.3rem .7rem;font-size:.72rem;'
+        f'letter-spacing:.06em;text-transform:uppercase;color:{ui.MUTED}">Claims</th>'
+        f'<th style="text-align:left;padding:.3rem .7rem;font-size:.72rem;'
+        f'letter-spacing:.06em;text-transform:uppercase;color:{ui.MUTED}">Content</th>'
+        f'<th style="text-align:left;padding:.3rem .7rem;font-size:.72rem;'
+        f'letter-spacing:.06em;text-transform:uppercase;color:{ui.MUTED}">Review</th></tr>'
+        + "".join(rows) + "</table>", **H)
 
-# --------------------------------------------------------------------------- #
-# Execution
-# --------------------------------------------------------------------------- #
-with tab_exec:
-    st.markdown("#### Agent execution log")
-    st.dataframe(pd.DataFrame(state["execution_log"]), use_container_width=True, hide_index=True)
     if state["warnings"]:
-        st.markdown("#### Warnings")
+        st.write("")
+        st.markdown('<div class="sec-h">Flagged for a human</div>', **H)
         for w in state["warnings"]:
-            st.warning(w)
-    if state.get("web_evidence"):
-        st.markdown("#### Web background (context only — never cited as VCG evidence)")
-        st.dataframe(pd.DataFrame(state["web_evidence"]), use_container_width=True,
-                     hide_index=True)
-    try:
-        trail = get_store().audit_trail(state["run_id"])
-        if trail:
-            with st.expander("SQLite audit trail"):
-                st.dataframe(pd.DataFrame(trail), use_container_width=True, hide_index=True)
-    except Exception:
-        pass
+            st.warning(w, icon="⚠️")
 
 
 # --------------------------------------------------------------------------- #
-# Evidence -- selected AND rejected, with reasons
+# Traceability -- the proof
+# --------------------------------------------------------------------------- #
+with tab_trace:
+    hero_18 = next((e for e in entries if "18 percent" in e.claim_text
+                    and e.verification_status == VerificationStatus.SUPPORTED), None)
+    hero_35 = next((e for e in entries if "35 percent" in e.claim_text
+                    and e.verification_status == VerificationStatus.GAP), None)
+    if hero_18 or hero_35:
+        hc1, hc2 = st.columns(2)
+        if hero_18:
+            hc1.markdown(ui.verdict(
+                True, "Verified — Supported",
+                f'“{hero_18.claim_text}”<br><span style="color:{ui.MUTED}">traced to '
+                f'<b>{evidence_display_id(hero_18.matched_evidence_id)}</b>; numeric match '
+                f'confirmed in context.</span>'), **H)
+        if hero_35:
+            hc2.markdown(ui.verdict(
+                False, "Caught — Gap",
+                f'“{hero_35.claim_text}”<br><span style="color:{ui.MUTED}">'
+                f'{hero_35.verification_reason}</span>'), **H)
+        st.caption("18 % passes, 35 % is caught — before either can reach an approved proposal.")
+        st.write("")
+
+    f1, f2 = st.columns([2, 1])
+    show = f1.multiselect("Filter by status", [s.value for s in VerificationStatus],
+                          default=["SUPPORTED", "PARTIAL", "GAP"])
+    only_reqs = f2.checkbox("Only rows tied to an RFP requirement", value=True)
+
+    view = [e for e in entries
+            if e.verification_status.value in show
+            and (not only_reqs or e.requirement_id != "-")]
+
+    df = pd.DataFrame([{
+        "Status": e.verification_status.value,
+        "RFP Requirement": e.rfp_requirement[:72],
+        "Evidence": evidence_display_id(e.matched_evidence_id),
+        "Draft Claim": e.claim_text[:86],
+        "Conf": round(e.confidence_score, 2),
+        "Reviewer": e.reviewer_decision.value,
+    } for e in view])
+
+    if not df.empty:
+        _tint = {k: ui.STATUS[k]["tint"] for k in ui.STATUS}
+        st.dataframe(
+            df.style.apply(
+                lambda r: [f"background-color: {_tint.get(r['Status'], '')}"] * len(r), axis=1),
+            use_container_width=True, hide_index=True, height=340,
+            column_config={
+                "Conf": st.column_config.ProgressColumn(
+                    "Confidence", min_value=0.0, max_value=1.0, format="%.2f"),
+            })
+    else:
+        st.info("No rows match the current filter.")
+
+    st.write("")
+    st.markdown('<div class="sec-h">Inspect one claim end to end</div>', **H)
+    if view:
+        labels = [f"{ui.STATUS.get(e.verification_status.value, ui.STATUS['NO_ROW'])['label']}"
+                  f"  ·  {e.claim_text[:88]}" for e in view]
+        idx = st.selectbox("Claim", range(len(labels)), format_func=lambda i: labels[i],
+                           label_visibility="collapsed")
+        e = view[idx]
+
+        st.markdown(
+            f'<div class="pills">{ui.pill(e.verification_status.value)}'
+            f'{ui.pill("NO_ROW", "confidence " + format(e.confidence_score, ".2f"))}'
+            f'{ui.pill("NO_ROW", "section: " + e.draft_section)}</div>', **H)
+
+        st.markdown(ui.chain_step(
+            f"1 · RFP requirement ({e.requirement_id})", e.rfp_requirement), **H)
+        if e.requirement_source_span:
+            st.markdown(ui.chain_step(
+                "2 · Exact quote located in the RFP",
+                f'“{e.requirement_source_span.quote}”', "quote"), **H)
+        if e.matched_chunk_text:
+            st.markdown(ui.chain_step(
+                f"3 · Source chunk used ({e.matched_evidence_id})",
+                e.matched_chunk_text.strip()[:700].replace("\n", "<br>"), "mono"), **H)
+        else:
+            st.markdown(ui.chain_step(
+                "3 · Source chunk used",
+                "<i>none — this claim cites no selected evidence.</i>"), **H)
+        st.markdown(ui.chain_step("4 · Drafted claim", e.claim_text), **H)
+
+        v1, v2, v3, v4 = st.columns(4)
+        v1.metric("Semantic", f"{e.semantic_similarity:.2f}")
+        v2.metric("Lexical", f"{e.lexical_overlap:.2f}")
+        v3.metric("Numeric", {True: "match", False: "contradicted", None: "n/a"}[e.numeric_match])
+        v4.metric("Attribution", "valid" if e.attribution_valid else "mismatch")
+        st.markdown(ui.chain_step("5 · Deterministic verifier", e.verification_reason), **H)
+
+    st.write("")
+    st.download_button("⬇  Traceability matrix (CSV)", export.traceability_csv(state),
+                       file_name=f"traceability_{state['run_id'][:8]}.csv", mime="text/csv")
+
+
+# --------------------------------------------------------------------------- #
+# Evidence
 # --------------------------------------------------------------------------- #
 with tab_ev:
     if state["evidence_conflicts"]:
-        st.error("Conflicts surfaced (never auto-resolved):")
+        st.error("Conflicting evidence surfaced — never auto-resolved:", icon="⚠️")
         for c in state["evidence_conflicts"]:
             st.write(f"• `{c.conflict_id}` **{c.conflict_type}** — {c.description}")
 
+    st.caption(f"{n_selected} chunks selected · {n_rejected} rejected, each with a reason.")
     checklist_by_id = {c.checklist_id: c for c in state["checklist"]}
     for cid, sel in state["selected_evidence"].items():
         if cid == "__pool__":
@@ -281,150 +380,133 @@ with tab_ev:
         item = checklist_by_id.get(cid)
         if item is None:
             continue
-        icon = "🟢" if sel else "🔴"
-        with st.expander(f"{icon} {item.requirement_text}  ·  {item.target_section}"):
+        badge = "SUPPORTED" if sel else "GAP"
+        with st.expander(f"{item.requirement_text}   ·   {item.target_section}"):
+            st.markdown(f'<div class="pills">{ui.pill(badge, "selected" if sel else "no evidence")}'
+                        f'{ui.pill("NO_ROW", str(len(state["rejected_evidence"].get(cid, []))) + " rejected")}'
+                        f'</div>', **H)
             st.caption(item.evidence_need)
-            if sel:
-                for e in sel:
-                    st.markdown(f"**SELECTED · {e.source_id}** — {e.reasoning}")
-                    st.code(e.chunk_text.strip()[:600])
-            else:
-                st.markdown("**No evidence cleared threshold — explicit GAP.**")
+            for e in sel:
+                st.markdown(f"**{e.source_id}** — {e.reasoning}")
+                st.code(e.chunk_text.strip()[:600])
+            if not sel:
+                st.markdown("**No candidate cleared the threshold — explicit GAP.**")
             rej = state["rejected_evidence"].get(cid, [])
             if rej:
                 st.markdown("_Rejected candidates:_")
                 for e in rej[:6]:
-                    st.markdown(f"- ❌ `{e.source_id}` — {e.rejection_reason}")
+                    st.markdown(f"- `{e.source_id}` — {e.rejection_reason}")
 
 
 # --------------------------------------------------------------------------- #
 # Draft
 # --------------------------------------------------------------------------- #
 with tab_draft:
-    for sec in state["proposal_draft"].sections:
-        flag = " ✏️ human-edited" if sec.human_edited else ""
-        gap = " · ⚠️ contains gap marker" if sec.has_gaps else ""
-        st.markdown(f"### {sec.title}{flag}{gap}")
+    for sec in draft.sections:
+        badges = ui.pill("SUPPORTED" if not sec.has_gaps else "GAP",
+                         "clean" if not sec.has_gaps else "contains a gap marker")
+        if sec.human_edited:
+            badges += ui.pill("FORWARD_LOOKING", "human-edited")
+        st.markdown(f"### {sec.title}", **H)
+        st.markdown(f'<div class="pills">{badges}</div>', **H)
         st.markdown(sec.content_markdown)
         st.divider()
 
 
 # --------------------------------------------------------------------------- #
-# Traceability -- the hero screen
+# Requirements
 # --------------------------------------------------------------------------- #
-with tab_trace:
-    st.markdown("### Requirement → Evidence → Draft Claim → Status")
-    entries = state["overall_traceability"]
+with tab_req:
+    rd = state["rfp_data"]
+    if state["requirement_validation_errors"]:
+        st.error("Ungrounded requirements were dropped (source quote not locatable in the RFP):")
+        for e in state["requirement_validation_errors"]:
+            st.write("• ", e)
 
-    # the hero moment, called out explicitly
-    hero_18 = next((e for e in entries if "18 percent" in e.claim_text
-                    and e.verification_status == VerificationStatus.SUPPORTED), None)
-    hero_35 = next((e for e in entries if "35 percent" in e.claim_text
-                    and e.verification_status == VerificationStatus.GAP), None)
-    hc1, hc2 = st.columns(2)
-    if hero_18:
-        hc1.success(f"🟢 **SUPPORTED** — “{hero_18.claim_text}”  \n"
-                    f"traced to `{evidence_display_id(hero_18.matched_evidence_id)}`, "
-                    f"numeric match confirmed in context.")
-    if hero_35:
-        hc2.error(f"🔴 **GAP** — “{hero_35.claim_text}”  \n"
-                  f"{hero_35.verification_reason}")
-    if hero_18 and hero_35:
-        st.caption("18% passes, 35% is caught — before either can reach an approved proposal.")
+    st.markdown('<div class="sec-h">Extracted requirements · each traced to its source quote</div>', **H)
+    st.dataframe(pd.DataFrame([{
+        "ID": r.requirement_id, "Requirement": r.text,
+        "Category": r.category.value, "Handling": r.handling.value,
+        "Mandatory": r.mandatory, "Confidence": round(r.extraction_confidence, 2),
+        "Source quote": r.source_span.quote,
+    } for r in rd.requirements]), use_container_width=True, hide_index=True,
+        column_config={"Confidence": st.column_config.ProgressColumn(
+            "Confidence", min_value=0.0, max_value=1.0, format="%.2f")})
 
-    d = state["proposal_draft"]
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Supported", d.supported_claim_count)
-    m2.metric("Partial", d.partial_claim_count)
-    m3.metric("Gap", d.gap_claim_count)
-    m4.metric("Matrix rows", len(entries))
-
-    f1, f2 = st.columns([1, 2])
-    show = f1.multiselect(
-        "Status", [s.value for s in VerificationStatus],
-        default=["SUPPORTED", "PARTIAL", "GAP"],
-    )
-    only_reqs = f2.checkbox("Only rows tied to an RFP requirement", value=True)
-
-    view = [
-        e for e in entries
-        if e.verification_status.value in show
-        and (not only_reqs or e.requirement_id != "-")
-    ]
-    df = pd.DataFrame([
-        {
-            "": STATUS_ICON.get(e.verification_status.value, ""),
-            "RFP Requirement": e.rfp_requirement[:70],
-            "Evidence": evidence_display_id(e.matched_evidence_id),
-            "Draft Claim": e.claim_text[:80],
-            "Status": e.verification_status.value,
-            "Conf": round(e.confidence_score, 2),
-            "Reviewer": e.reviewer_decision.value,
-        }
-        for e in view
-    ])
-    _bg = {"SUPPORTED": "#e6f4ea", "PARTIAL": "#fef7e0", "GAP": "#fce8e6",
-           "FORWARD_LOOKING": "#e8f0fe"}
-    styled = df.style.apply(
-        lambda row: [f"background-color: {_bg.get(row['Status'], '')}"] * len(row), axis=1
-    )
-    st.dataframe(styled, use_container_width=True, hide_index=True, height=360)
-
-    st.markdown("#### Inspect one claim end-to-end")
-    labels = [f"{STATUS_ICON.get(e.verification_status.value,'')} {e.claim_text[:90]}" for e in view]
-    if labels:
-        idx = st.selectbox("Claim", range(len(labels)), format_func=lambda i: labels[i])
-        e = view[idx]
-        st.markdown(f"**RFP requirement** ({e.requirement_id})  \n> {e.rfp_requirement}")
-        if e.requirement_source_span:
-            st.caption(f"exact RFP quote: “{e.requirement_source_span.quote}”")
-        st.markdown(f"**Draft claim** ({e.draft_section})  \n> {e.claim_text}")
-        if e.matched_chunk_text:
-            st.markdown(f"**Exact source chunk** (`{e.matched_evidence_id}`)")
-            st.code(e.matched_chunk_text.strip()[:700])
-        else:
-            st.markdown("**Source chunk:** _none — this claim cites no selected evidence._")
-        st.markdown(
-            f"**Deterministic verifier**  \n"
-            f"status `{e.verification_status.value}` · confidence {e.confidence_score:.2f} · "
-            f"semantic {e.semantic_similarity:.2f} · lexical {e.lexical_overlap:.2f} · "
-            f"numeric `{e.numeric_match}` · attribution `{e.attribution_valid}`  \n"
-            f"> {e.verification_reason}"
-        )
-
-    csv = export.traceability_csv(state)
-    st.download_button("⬇ traceability matrix (CSV)", csv,
-                       file_name=f"traceability_{state['run_id'][:8]}.csv", mime="text/csv")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown('<div class="sec-h">Procedural checklist · never becomes prose</div>', **H)
+        for p in state["procedural_checklist"] or ["—"]:
+            st.checkbox(p, key=f"proc_{p[:30]}", value=False)
+    with c2:
+        st.markdown('<div class="sec-h">Needs human input</div>', **H)
+        for h in state["human_input_requirements"] or ["—"]:
+            st.write("• ", h)
+        caps = [r.text for r in rd.requirements if r.handling.value == "CAPABILITY_GAP"]
+        if caps:
+            st.markdown('<div class="sec-h">Capability gaps · go / no-go</div>', **H)
+            for c in caps:
+                st.markdown(f'{ui.pill("GAP", "capability gap")}&nbsp; {c}', **H)
 
 
 # --------------------------------------------------------------------------- #
-# Review -- section approval, edits, gap overrides, export
+# Execution
+# --------------------------------------------------------------------------- #
+with tab_exec:
+    st.markdown('<div class="sec-h">Agent execution log</div>', **H)
+    st.dataframe(pd.DataFrame(state["execution_log"]), use_container_width=True,
+                 hide_index=True)
+    if state.get("web_evidence"):
+        st.markdown('<div class="sec-h">Web background · context only, never cited as evidence</div>', **H)
+        st.dataframe(pd.DataFrame(state["web_evidence"]), use_container_width=True,
+                     hide_index=True)
+    try:
+        trail = get_store().audit_trail(state["run_id"])
+        if trail:
+            with st.expander("SQLite audit trail (every stage + every human decision)"):
+                st.dataframe(pd.DataFrame(trail), use_container_width=True, hide_index=True)
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------------------- #
+# Review
 # --------------------------------------------------------------------------- #
 with tab_review:
-    draft = state["proposal_draft"]
-    st.markdown("#### Section-level approval")
+    st.markdown(ui.verdict(
+        export_ok,
+        "Export gate OPEN" if export_ok else "Export gate BLOCKED",
+        "Every section approved and no unresolved gaps."
+        if export_ok else " · ".join(export_reasons)), **H)
+    st.write("")
+
+    st.markdown('<div class="sec-h">Section-level approval</div>', **H)
     for sec in draft.sections:
-        with st.expander(f"{sec.review_status.value} · {sec.title}"
-                         + (" ✏️" if sec.human_edited else "")):
+        approved = sec.review_status == ReviewDecision.APPROVED
+        with st.expander(f"{'✓' if approved else '○'}  {sec.title}"
+                         f"{'  ·  edited' if sec.human_edited else ''}"):
+            st.markdown(f'<div class="pills">'
+                        f'{ui.pill("SUPPORTED" if approved else "NO_ROW", sec.review_status.value.title())}'
+                        f'{ui.pill("GAP", "contains a gap") if sec.has_gaps else ""}</div>', **H)
             st.markdown(sec.content_markdown)
             comment = st.text_input("Comment", key=f"cm_{sec.section_id}")
             b1, b2, b3, b4 = st.columns(4)
-            if b1.button("Approve", key=f"ap_{sec.section_id}"):
+            if b1.button("Approve", key=f"ap_{sec.section_id}", use_container_width=True):
                 review.submit_section_decision(state, sec.section_id, "reviewer",
                                                ReviewDecision.APPROVED, comment)
                 st.rerun()
-            if b2.button("Request changes", key=f"cc_{sec.section_id}"):
+            if b2.button("Request changes", key=f"cc_{sec.section_id}", use_container_width=True):
                 review.submit_section_decision(state, sec.section_id, "reviewer",
                                                ReviewDecision.CHANGES_REQUESTED, comment)
                 st.rerun()
-            if b3.button("Reject", key=f"rj_{sec.section_id}"):
+            if b3.button("Reject", key=f"rj_{sec.section_id}", use_container_width=True):
                 review.submit_section_decision(state, sec.section_id, "reviewer",
                                                ReviewDecision.REJECTED, comment)
                 st.rerun()
-            if b4.button("Regenerate", key=f"rg_{sec.section_id}"):
+            if b4.button("Regenerate", key=f"rg_{sec.section_id}", use_container_width=True):
                 review.regenerate_section(state, sec.title)
                 st.rerun()
-            new_md = st.text_area("Direct human edit (preserved through later regens)",
+            new_md = st.text_area("Direct human edit (preserved through later regenerations)",
                                   value=sec.content_markdown, key=f"ed_{sec.section_id}",
                                   height=140)
             if st.button("Save edit", key=f"sv_{sec.section_id}"):
@@ -432,13 +514,15 @@ with tab_review:
                 st.rerun()
 
     st.divider()
-    st.markdown("#### Unresolved GAPs (block export unless overridden with a reason)")
+    st.markdown('<div class="sec-h">Unresolved gaps · block export unless overridden with a reason</div>', **H)
     gaps = review.unresolved_gaps(state)
     if not gaps:
-        st.success("No unresolved GAP rows.")
+        st.markdown(ui.verdict(True, "No unresolved gaps", "Nothing is blocking on this side."), **H)
     for g in gaps:
-        st.write(f"🔴 `{g.trace_id}` — {g.rfp_requirement[:80]} → {g.claim_text[:60]}")
-        r = st.text_input("Override reason", key=f"ov_{g.trace_id}")
+        st.markdown(f'{ui.pill("GAP")}&nbsp; <b>{g.rfp_requirement[:80]}</b><br>'
+                    f'<span style="color:{ui.MUTED}">→ {g.claim_text[:90]}</span>', **H)
+        r = st.text_input("Override reason", key=f"ov_{g.trace_id}",
+                          placeholder="e.g. no comparable >30% engagement — we will not claim it")
         if st.button("Record override", key=f"ovb_{g.trace_id}"):
             if r.strip():
                 review.override_gap(state, g.trace_id, r)
@@ -447,19 +531,19 @@ with tab_review:
                 st.error("A reason is required.")
 
     st.divider()
-    ok, reasons = review.can_export(state)
-    if ok:
-        st.success("Export gate OPEN — every section approved, no unresolved GAP.")
-        if st.button("Finalize", type="primary"):
+    if export_ok:
+        if st.button("Finalize proposal", type="primary"):
             review.finalize(state)
             st.rerun()
-        st.download_button("⬇ proposal (Markdown)", export.render_markdown(state, enforce=False),
-                           file_name=f"proposal_{state['run_id'][:8]}.md")
-        st.download_button("⬇ traceability (CSV)", export.traceability_csv(state),
-                           file_name=f"traceability_{state['run_id'][:8]}.csv")
+        d1, d2 = st.columns(2)
+        d1.download_button("⬇  Proposal (Markdown)",
+                           export.render_markdown(state, enforce=False),
+                           file_name=f"proposal_{state['run_id'][:8]}.md",
+                           use_container_width=True)
+        d2.download_button("⬇  Traceability (CSV)", export.traceability_csv(state),
+                           file_name=f"traceability_{state['run_id'][:8]}.csv",
+                           use_container_width=True)
     else:
-        st.warning("Export gate BLOCKED:")
-        for r in reasons:
-            st.write("• ", r)
-    st.caption("The system never sends or submits anything externally — that stays "
-               "a manual, out-of-system action, permanently.")
+        st.caption("Approve every section and resolve or override each gap to unlock export.")
+    st.caption("The system never sends or submits anything externally — that stays a "
+               "manual, out-of-system action, permanently.")
