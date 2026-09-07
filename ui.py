@@ -1,36 +1,40 @@
-"""Presentation layer: design tokens, CSS, and small reusable components.
+"""Presentation layer: design tokens, CSS, and reusable components.
 
-Dark is the default surface. Colour follows the validated reference palette
-(dataviz `palette.md`):
+Type system: IBM Plex Sans for the interface, IBM Plex Mono for identifiers and
+source passages. Restrained scale and weight -- headings are set at 600/650, not
+800, and the hero is sized as an application header rather than a marketing
+banner.
+
+Colour follows the validated reference palette (dataviz `palette.md`) on a dark
+surface:
 
   * status roles are FIXED and never themed -- good / warning / critical, plus an
-    informational blue for FORWARD_LOOKING (a claim that isn't judged at all).
-    All four clear 3:1 on the dark surface #1a1a19 (validated), which is why dark
-    is the better surface here: on light, warning amber sits at 1.83:1 and needs
-    the relief rule; on dark it measures 9.49:1;
-  * the brand accent is blue, so red is reserved exclusively for problems -- a red
-    primary button competing with "GAP is red" was the main colour bug earlier;
-  * every status still ships with a dot + a word, so colour never carries meaning
-    alone (CVD, print, forced-colors).
+    informational blue for FORWARD_LOOKING. All four clear 3:1 against the dark
+    surface #1a1a19 (validated); on a light surface warning amber measures
+    1.83:1 and requires the relief rule, which is why dark is the correct
+    surface for this interface;
+  * the accent is blue, so red is reserved exclusively for exceptions;
+  * every status is rendered with a mark and a word, so colour never carries
+    meaning unaided.
 """
 from __future__ import annotations
 
 # --- surfaces & ink (reference palette, dark column) ----------------------
 PAGE = "#0d0d0d"        # page plane
 SURFACE = "#1a1a19"     # card / chart surface
-ELEV = "#212120"        # raised surface (hover, inputs)
+ELEV = "#212120"        # raised surface
 LINE = "#2c2c2a"        # hairline / gridline
 AXIS = "#383835"        # baseline / axis
 INK = "#ffffff"         # primary
 INK_2 = "#c3c2b7"       # secondary
 MUTED = "#898781"       # axis / labels
-BRAND = "#3987e5"       # accent -- NOT red
+BRAND = "#3987e5"       # accent -- never red
 
 # --- status roles (fixed; fills are mode-invariant) ----------------------
 STATUS: dict[str, dict[str, str]] = {
     "SUPPORTED": {
         "fill": "#0ca30c", "ink": "#2fc32f", "tint": "rgba(12,163,12,.15)",
-        "icon": "●", "label": "Supported",
+        "icon": "●", "label": "Substantiated",
     },
     "PARTIAL": {
         "fill": "#fab219", "ink": "#fab219", "tint": "rgba(250,178,25,.15)",
@@ -38,7 +42,7 @@ STATUS: dict[str, dict[str, str]] = {
     },
     "GAP": {
         "fill": "#d03b3b", "ink": "#e66767", "tint": "rgba(208,59,59,.17)",
-        "icon": "●", "label": "Gap",
+        "icon": "●", "label": "Unsubstantiated",
     },
     "FORWARD_LOOKING": {
         "fill": "#3987e5", "ink": "#5598e7", "tint": "rgba(57,135,229,.15)",
@@ -61,85 +65,105 @@ def status_fill(key: str) -> str:
 # --------------------------------------------------------------------------- #
 CSS = f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
 #MainMenu, footer, [data-testid="stToolbar"] {{visibility:hidden;}}
-.block-container {{padding-top:3rem; padding-bottom:3.5rem; max-width:1240px;}}
+.block-container {{padding-top:3rem; padding-bottom:4rem; max-width:1260px;}}
 html, body, [class*="css"], button, input, select, textarea,
 h1, h2, h3, h4, h5, h6 {{
-  font-family:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+  font-family:'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
   -webkit-font-smoothing:antialiased;
 }}
-h1,h2,h3,h4 {{letter-spacing:-.015em; color:{INK};}}
+code, pre, .mono, [data-testid="stCode"] * {{
+  font-family:'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace !important;
+}}
+h1,h2,h3,h4 {{letter-spacing:-.012em; color:{INK}; font-weight:600;}}
 
 /* ---- tabs ---- */
-.stTabs [data-baseweb="tab-list"] {{gap:.15rem; border-bottom:1px solid {LINE};}}
+.stTabs [data-baseweb="tab-list"] {{gap:0; border-bottom:1px solid {LINE};}}
 .stTabs [data-baseweb="tab"] {{
-  height:2.5rem; padding:0 .9rem; font-size:.9rem; font-weight:500; color:{INK_2};
+  height:2.6rem; padding:0 1.05rem; font-size:.855rem; font-weight:500;
+  color:{MUTED}; letter-spacing:.005em;
 }}
-.stTabs [aria-selected="true"] {{color:{BRAND}; font-weight:650;}}
+.stTabs [aria-selected="true"] {{color:{INK}; font-weight:600;}}
 
 /* ---- typography helpers ---- */
-.eyebrow {{letter-spacing:.13em; text-transform:uppercase; font-size:.7rem;
-          font-weight:700; color:{BRAND};}}
-.hero-h1 {{font-size:2.6rem; line-height:1.1; font-weight:800; margin:.35rem 0 .7rem;
-          letter-spacing:-.028em; color:{INK};}}
-.hero-sub {{font-size:1.05rem; color:{INK_2}; max-width:46rem; line-height:1.55;}}
-.sec-h {{font-size:.78rem; font-weight:700; letter-spacing:.09em; text-transform:uppercase;
-        color:{MUTED}; margin:.2rem 0 .6rem;}}
+.eyebrow {{letter-spacing:.15em; text-transform:uppercase; font-size:.68rem;
+          font-weight:600; color:{MUTED};}}
+.hero-h1 {{font-size:2.05rem; line-height:1.2; font-weight:600; margin:.4rem 0 .75rem;
+          letter-spacing:-.02em; color:{INK};}}
+.hero-sub {{font-size:.98rem; color:{INK_2}; max-width:50rem; line-height:1.62;}}
+.sec-h {{font-size:.7rem; font-weight:600; letter-spacing:.13em; text-transform:uppercase;
+        color:{MUTED}; margin:.35rem 0 .65rem;}}
+.note {{font-size:.8rem; color:{MUTED}; line-height:1.55;}}
 
 /* ---- cards ---- */
-.card {{border:1px solid {LINE}; border-radius:14px; padding:1.05rem 1.15rem;
+.card {{border:1px solid {LINE}; border-radius:6px; padding:1.1rem 1.2rem;
        background:{SURFACE}; height:100%;}}
-.card h4 {{margin:.1rem 0 .4rem; font-size:.97rem; font-weight:700; color:{INK};}}
-.card p {{margin:0; color:{INK_2}; font-size:.88rem; line-height:1.55;}}
+.card h4 {{margin:0 0 .45rem; font-size:.92rem; font-weight:600; color:{INK};
+          letter-spacing:-.005em;}}
+.card p {{margin:0; color:{INK_2}; font-size:.855rem; line-height:1.62;}}
 
 /* ---- stat tiles ---- */
-.tiles {{display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); gap:.55rem;}}
-.tile {{border:1px solid {LINE}; border-radius:13px; padding:.8rem .95rem; background:{SURFACE};
-       border-top:3px solid var(--accent,{LINE});}}
-.tile .k {{font-size:.72rem; font-weight:600; letter-spacing:.05em; text-transform:uppercase;
-          color:{MUTED};}}
-.tile .v {{font-size:1.85rem; font-weight:750; line-height:1.15; margin-top:.15rem; color:{INK};}}
-.tile .s {{font-size:.76rem; color:{INK_2}; margin-top:.1rem;}}
+.tiles {{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:.5rem;}}
+.tile {{border:1px solid {LINE}; border-radius:6px; padding:.85rem .95rem; background:{SURFACE};
+       border-top:2px solid var(--accent,{LINE});}}
+.tile .k {{font-size:.665rem; font-weight:600; letter-spacing:.055em; text-transform:uppercase;
+          color:{MUTED}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}}
+.tile .v {{font-size:1.72rem; font-weight:600; line-height:1.2; margin-top:.28rem; color:{INK};
+          font-variant-numeric:tabular-nums; letter-spacing:-.02em;}}
+.tile .s {{font-size:.735rem; color:{MUTED}; margin-top:.2rem; line-height:1.4;}}
 
 /* ---- status pills ---- */
-.pill {{display:inline-flex; align-items:center; gap:.34rem; border-radius:999px;
-       padding:.16rem .6rem; font-size:.76rem; font-weight:600; white-space:nowrap;
-       border:1px solid transparent;}}
-.pill .dot {{font-size:.62rem; line-height:1;}}
-.pills {{display:flex; flex-wrap:wrap; gap:.4rem; margin:.45rem 0 .1rem;}}
+.pill {{display:inline-flex; align-items:center; gap:.36rem; border-radius:3px;
+       padding:.18rem .55rem; font-size:.735rem; font-weight:500; white-space:nowrap;
+       border:1px solid transparent; letter-spacing:.005em;}}
+.pill .dot {{font-size:.58rem; line-height:1;}}
+.pills {{display:flex; flex-wrap:wrap; gap:.35rem; margin:.45rem 0 .15rem;}}
 
 /* ---- verdict banner ---- */
-.verdict {{border-radius:14px; padding:.95rem 1.15rem; border:1px solid transparent;
-          display:flex; gap:.85rem; align-items:flex-start;}}
-.verdict .vt {{font-weight:750; font-size:1rem; margin-bottom:.12rem;}}
-.verdict .vb {{font-size:.87rem; line-height:1.5;}}
+.verdict {{border-radius:6px; padding:.95rem 1.15rem; border:1px solid transparent;
+          border-left-width:3px; display:flex; gap:.8rem; align-items:flex-start;}}
+.verdict .vt {{font-weight:600; font-size:.95rem; margin-bottom:.2rem;
+              letter-spacing:-.005em;}}
+.verdict .vb {{font-size:.845rem; line-height:1.58;}}
 
-/* ---- pipeline strip ---- */
-.flow {{display:flex; flex-wrap:wrap; gap:.35rem;}}
-.flow span {{background:{SURFACE}; border:1px solid {LINE}; border-radius:999px;
-            padding:.27rem .68rem; font-size:.78rem; color:{INK_2}; white-space:nowrap;}}
+/* ---- process strip ---- */
+.flow {{display:flex; flex-wrap:wrap; gap:.3rem;}}
+.flow span {{background:{SURFACE}; border:1px solid {LINE}; border-radius:3px;
+            padding:.28rem .6rem; font-size:.745rem; color:{MUTED}; white-space:nowrap;
+            letter-spacing:.02em;}}
 .flow span.gate {{background:{STATUS['GAP']['tint']}; border-color:{STATUS['GAP']['fill']}55;
-                 color:{STATUS['GAP']['ink']}; font-weight:650;}}
+                 color:{STATUS['GAP']['ink']}; font-weight:600;}}
 
 /* ---- claim inspector ---- */
-.chain {{border:1px solid {LINE}; border-left:3px solid {BRAND}; border-radius:0 12px 12px 0;
-        background:{SURFACE}; padding:.75rem .95rem; margin-bottom:.5rem;}}
-.chain .cl {{font-size:.7rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
-            color:{MUTED}; margin-bottom:.25rem;}}
-.chain .cv {{font-size:.92rem; color:{INK}; line-height:1.55;}}
-.quote {{font-style:italic; color:{INK_2};}}
-.mono {{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.8rem;
-       color:{INK_2};}}
+.chain {{border:1px solid {LINE}; border-left:2px solid {BRAND}; border-radius:0 5px 5px 0;
+        background:{SURFACE}; padding:.75rem 1rem; margin-bottom:.4rem;}}
+.chain .cl {{font-size:.665rem; font-weight:600; letter-spacing:.13em; text-transform:uppercase;
+            color:{MUTED}; margin-bottom:.3rem;}}
+.chain .cv {{font-size:.895rem; color:{INK}; line-height:1.62;}}
+.quote {{color:{INK_2};}}
+.mono {{font-size:.8rem; color:{INK_2}; line-height:1.7;}}
 
 /* ---- misc ---- */
-.cta {{margin-top:1.1rem; font-size:.95rem; color:{INK};}}
-.cta b {{color:{BRAND};}}
+.cta {{margin-top:1.15rem; font-size:.9rem; color:{INK_2}; line-height:1.6;}}
+.cta b {{color:{INK}; font-weight:600;}}
 hr {{border-color:{LINE};}}
-[data-testid="stMetricValue"] {{font-size:1.7rem; font-weight:750;}}
-.stDownloadButton button, .stButton button {{border-radius:9px; font-weight:600;}}
-code {{color:{INK_2};}}
+[data-testid="stMetricValue"] {{font-size:1.4rem; font-weight:600;
+                               font-variant-numeric:tabular-nums;}}
+[data-testid="stMetricLabel"] {{font-size:.72rem; letter-spacing:.08em;
+                               text-transform:uppercase; color:{MUTED};}}
+.stDownloadButton button, .stButton button {{border-radius:4px; font-weight:500;
+                                             font-size:.855rem;}}
+code {{color:{INK_2}; font-size:.82rem;}}
+table.readiness {{width:100%; border-collapse:collapse; font-size:.855rem;}}
+table.readiness th {{text-align:left; padding:.35rem .75rem; font-size:.665rem;
+                    letter-spacing:.12em; text-transform:uppercase; color:{MUTED};
+                    font-weight:600; border-bottom:1px solid {LINE};}}
+table.readiness td {{padding:.5rem .75rem; border-bottom:1px solid {LINE};
+                    color:{INK_2};}}
+table.readiness td.num {{text-align:right; font-variant-numeric:tabular-nums;}}
+table.readiness td b {{color:{INK}; font-weight:500;}}
 </style>
 """
 
@@ -168,9 +192,7 @@ def tiles(items: list[tuple[str, object, str, str]]) -> str:
 def verdict(ok: bool, title: str, body: str) -> str:
     role = STATUS["SUPPORTED"] if ok else STATUS["GAP"]
     return (f'<div class="verdict" style="background:{role["tint"]};'
-            f'border-color:{role["fill"]}55">'
-            f'<div style="font-size:1.3rem;line-height:1.2;color:{role["ink"]}">'
-            f'{"✓" if ok else "✕"}</div>'
+            f'border-color:{role["fill"]}55;border-left-color:{role["fill"]}">'
             f'<div><div class="vt" style="color:{role["ink"]}">{title}</div>'
             f'<div class="vb" style="color:{INK_2}">{body}</div></div></div>')
 
@@ -184,10 +206,11 @@ def chain_step(label: str, value: str, extra_class: str = "") -> str:
 # Charts (Altair) -- thin marks, recessive axes, tooltips, no chart junk
 # --------------------------------------------------------------------------- #
 def coverage_bar(counts: dict[str, int]):
-    """One stacked horizontal bar: how the RFP's requirements resolved.
+    """Disposition of every extracted requirement, as one stacked bar.
 
-    Composition of a whole -> a single stacked bar, with a 2px surface-coloured
-    gap between segments; direct-labelled by the pill legend beneath it.
+    Composition of a whole -> a single stacked bar ordered best to worst, with a
+    2px surface-coloured gap between segments; direct-labelled by the pill
+    legend beneath it.
     """
     import altair as alt
     import pandas as pd
@@ -199,7 +222,7 @@ def coverage_bar(counts: dict[str, int]):
     df = pd.DataFrame(rows)
     return (
         alt.Chart(df)
-        .mark_bar(cornerRadius=5, stroke=SURFACE, strokeWidth=2)
+        .mark_bar(cornerRadius=2, stroke=SURFACE, strokeWidth=2)
         .encode(
             x=alt.X("n:Q", stack="zero", axis=None, title=None),
             color=alt.Color(
@@ -208,21 +231,21 @@ def coverage_bar(counts: dict[str, int]):
                                 range=[status_fill(r["status"]) for r in rows]),
                 legend=None,
             ),
-            # best -> worst, not alphabetical
             order=alt.Order("rank:Q", sort="ascending"),
-            tooltip=[alt.Tooltip("label:N", title="Status"),
+            tooltip=[alt.Tooltip("label:N", title="Disposition"),
                      alt.Tooltip("n:Q", title="Requirements")],
         )
-        .properties(height=42, background="transparent")
+        .properties(height=38, background="transparent")
         .configure_view(strokeWidth=0)
     )
 
 
 def evidence_bar(usage: dict[str, int]):
-    """Which corpus documents actually got cited, and how often.
+    """Source documents cited by the drafted claims.
 
-    Magnitude across a named set -> horizontal bars, one series (no legend
-    needed; the heading names it), sorted by value.
+    Magnitude across a named set -> horizontal bars, single series (the heading
+    names it, so no legend), sorted by value, Step-sized bands so labels cannot
+    collide.
     """
     import altair as alt
     import pandas as pd
@@ -232,20 +255,20 @@ def evidence_bar(usage: dict[str, int]):
     df = pd.DataFrame([{"doc": k, "n": v} for k, v in usage.items()])
     return (
         alt.Chart(df)
-        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=BRAND)
+        .mark_bar(cornerRadiusTopRight=2, cornerRadiusBottomRight=2, color=BRAND)
         .encode(
-            # one band per document; Step sizing keeps labels from colliding
             y=alt.Y("doc:N", sort="-x", title=None,
-                    scale=alt.Scale(paddingInner=0.45, paddingOuter=0.25),
-                    axis=alt.Axis(labelColor=INK_2, labelFontSize=12, domain=False,
-                                  ticks=False, labelPadding=10, labelLimit=180)),
+                    scale=alt.Scale(paddingInner=0.5, paddingOuter=0.25),
+                    axis=alt.Axis(labelColor=INK_2, labelFontSize=11.5, domain=False,
+                                  ticks=False, labelPadding=10, labelLimit=190,
+                                  labelFont="IBM Plex Mono")),
             x=alt.X("n:Q", title=None,
-                    axis=alt.Axis(labelColor=MUTED, labelFontSize=11, grid=True,
+                    axis=alt.Axis(labelColor=MUTED, labelFontSize=10.5, grid=True,
                                   gridColor=LINE, domain=False, ticks=False,
                                   tickMinStep=1, format="d")),
             tooltip=[alt.Tooltip("doc:N", title="Document"),
                      alt.Tooltip("n:Q", title="Claims citing it")],
         )
-        .properties(height=alt.Step(34), background="transparent")
+        .properties(height=alt.Step(32), background="transparent")
         .configure_view(strokeWidth=0)
     )

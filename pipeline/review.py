@@ -139,12 +139,16 @@ def can_export(state) -> tuple[bool, list[str]]:
     not_approved = [s.title for s in draft.sections
                     if s.review_status != ReviewDecision.APPROVED]
     if not_approved:
-        reasons.append("sections not APPROVED: " + ", ".join(not_approved))
+        reasons.append(
+            f"{len(not_approved)} section"
+            f"{'s await' if len(not_approved) != 1 else ' awaits'} reviewer approval "
+            f"({', '.join(not_approved)})"
+        )
     gaps = unresolved_gaps(state)
     if gaps:
         reasons.append(
-            f"{len(gaps)} unresolved GAP row(s) -- resolve, or override each with a "
-            f"recorded reason: " + ", ".join(g.trace_id for g in gaps[:5])
+            f"{len(gaps)} unsubstantiated claim{'s' if len(gaps) != 1 else ''} "
+            f"require{'' if len(gaps) != 1 else 's'} resolution or a recorded override"
         )
     return (not reasons), reasons
 
@@ -152,7 +156,7 @@ def can_export(state) -> tuple[bool, list[str]]:
 def finalize(state) -> ProposalAgentState:
     ok, reasons = can_export(state)
     if not ok:
-        raise PermissionError("cannot finalize: " + " | ".join(reasons))
+        raise PermissionError("Cannot finalise: " + "; ".join(reasons))
     state["proposal_draft"].status = ReviewDecision.APPROVED
     state["review_status"] = "FINALIZED"
     get_store().log(state["run_id"], "finalize", "APPROVED", actor="human")
