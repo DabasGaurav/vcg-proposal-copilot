@@ -9,6 +9,9 @@ nothing beyond that.
 """
 from __future__ import annotations
 
+import re
+from functools import lru_cache
+
 import config
 from models.schemas import (
     AtomicClaim,
@@ -24,8 +27,37 @@ from services.text import (
     significant_tokens,
 )
 
-# Authoritative attribution facts for the demo corpus (SPEC Section 9).
-KNOWN_PERSON_TENURE = {"ananya mehta": 18, "rohan sen": 12}
+# Authoritative attribution facts, derived from the firm's own CV documents
+# rather than hard-coded. A two-person lookup table silently passed every claim
+# about anyone else, so the attribution rule only worked on the demo corpus.
+_TENURE_SENTENCE = re.compile(
+    r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b[^.]{0,120}?\b(\d{1,2})\s+years?\b",
+    re.S,
+)
+
+
+@lru_cache(maxsize=1)
+def known_person_tenure() -> dict[str, int]:
+    """Map person -> stated years of experience, read from the TEAM_CV corpus.
+
+    Falls back to an empty map if the corpus cannot be loaded; an unknown person
+    is simply not checked, which is the documented default (attribution_valid
+    stays True unless a stated fact is contradicted).
+    """
+    facts: dict[str, int] = {}
+    try:
+        from services.corpus_loader import load_documents
+        docs = load_documents()
+    except Exception:
+        return facts
+    for doc in docs:
+        if str(doc.metadata.get("category", "")).upper() != "TEAM_CV":
+            continue
+        for name, years in _TENURE_SENTENCE.findall(doc.body):
+            key = name.strip().lower()
+            # first stated figure for a person wins; CVs lead with the summary
+            facts.setdefault(key, int(years))
+    return facts
 
 # tokens that don't count as topical agreement around a number -- units, generic
 # change verbs, and org/filler words that appear everywhere in the corpus.
@@ -85,7 +117,7 @@ def attribution_consistent(claim: AtomicClaim, evidence_text: str) -> bool:
         return True
     for entity in claim.named_entities:
         key = entity.strip().lower()
-        truth = KNOWN_PERSON_TENURE.get(key)
+        truth = known_person_tenure().get(key)
         if truth is None:
             continue
         if not any(numbers_match(y, truth, abs_tol=0.0) for y in claim_years):

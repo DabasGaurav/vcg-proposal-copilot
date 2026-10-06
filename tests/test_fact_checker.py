@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import pytest
 
+import config
+
 from models.schemas import EvidenceMatch, VerificationStatus
 from pipeline.verification import (
     attribution_consistent,
@@ -159,3 +161,33 @@ def test_forward_looking_claim_with_no_citation_is_clean(semantic_fn):
     res = verify_claim(claim, {}, semantic_fn)
     assert res["status"] == VerificationStatus.FORWARD_LOOKING
     assert res["citation_valid"] is True
+
+
+def test_attribution_facts_are_read_from_the_cv_corpus(tmp_path, monkeypatch):
+    """Tenure facts must come from the firm's CV documents, not a hard-coded
+    table that silently passes every claim about anyone else."""
+    from pipeline import verification
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "CV_NEW.md").write_text(
+        "---\ndocument_id: CV_NEW\ncategory: TEAM_CV\nindustry: banking\n"
+        "subsector: x\nregion: India\nyear: 2026\nfreshness_date: 2026-01-01\n"
+        "usage_restriction: internal_only\nsuperseded_by: none\n---\n\n"
+        "# Priya Nair — Partner\n\n## Summary\n\n"
+        "Priya Nair is a Partner at VCG with 21 years of experience in banking.\n"
+    )
+    monkeypatch.setattr(config, "CORPUS_DIR", corpus)
+    verification.known_person_tenure.cache_clear()
+    try:
+        facts = verification.known_person_tenure()
+        assert facts.get("priya nair") == 21      # a person the code never knew about
+    finally:
+        verification.known_person_tenure.cache_clear()
+
+
+def test_wrong_tenure_for_a_corpus_person_is_a_mismatch():
+    claim = make_claim(claim_text="Rohan Sen has 18 years of experience",
+                       numeric_tokens=["18 years"], named_entities=["Rohan Sen"],
+                       cited_evidence_ids=["CV_002"])
+    assert attribution_consistent(claim, CV2) is False
