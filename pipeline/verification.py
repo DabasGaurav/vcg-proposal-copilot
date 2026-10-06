@@ -196,10 +196,30 @@ def reason_string(claim: AtomicClaim, m: EvidenceMatch, status: VerificationStat
 # --------------------------------------------------------------------------- #
 def verify_claim(claim: AtomicClaim, evidence_index: dict, semantic_fn) -> dict:
     if not claim.requires_verification:
+        # A prospective statement needs no evidence -- but if it *cites* some, the
+        # citation still has to resolve. A generated draft that attributes a
+        # forward-looking sentence to a passage that was never selected is making
+        # a false provenance claim, and skipping the check here was a hole in the
+        # "every citation resolves to selected evidence" guarantee.
+        unresolved = [cid for cid in claim.cited_evidence_ids
+                      if evidence_index.get(cid) is None]
+        if unresolved:
+            return {
+                "status": VerificationStatus.FORWARD_LOOKING,
+                "match": None,
+                "confidence": 1.0,
+                "citation_valid": False,
+                "unresolved_citations": unresolved,
+                "reason": ("FORWARD_LOOKING: prospective statement, not a historical "
+                           "claim. CITATION REJECTED: " + ", ".join(unresolved) +
+                           " did not resolve to selected evidence and was stripped."),
+            }
         return {
             "status": VerificationStatus.FORWARD_LOOKING,
             "match": None,
             "confidence": 1.0,
+            "citation_valid": True,
+            "unresolved_citations": [],
             "reason": "FORWARD_LOOKING: prospective statement, not a historical claim.",
         }
 
@@ -253,6 +273,13 @@ def run(state, semantic_fn=None):
         results[claim.claim_id] = verify_claim(claim, index, semantic_fn)
 
     state["_verification_results"] = results  # consumed by traceability.py
+    broken = sorted({cid for r in results.values()
+                     for cid in (r.get("unresolved_citations") or [])})
+    if broken:
+        state.setdefault("warnings", []).append(
+            f"{len(broken)} citation(s) in the draft did not resolve to selected "
+            f"evidence and were rejected: " + ", ".join(broken[:6])
+        )
     counts: dict[str, int] = {}
     for r in results.values():
         counts[r["status"].value] = counts.get(r["status"].value, 0) + 1

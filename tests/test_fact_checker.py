@@ -137,3 +137,25 @@ def test_numeric_contradiction_never_overridden_by_similarity():
 def test_attribution_default_true_when_no_entity():
     claim = make_claim(claim_text="turnaround fell 18 percent", numeric_tokens=["18 percent"])
     assert attribution_consistent(claim, "unrelated text") is True
+
+
+def test_forward_looking_claim_cannot_cite_unselected_evidence(semantic_fn):
+    """A prospective statement needs no evidence, but a citation it does carry
+    must still resolve -- otherwise the draft asserts a false provenance."""
+    claim = make_claim(
+        claim_text="We propose a phased engagement reaching a measured pilot",
+        requires_verification=False, cited_evidence_ids=["METHOD_001"],
+    )
+    res = verify_claim(claim, {}, semantic_fn)          # empty index: nothing selected
+    assert res["status"] == VerificationStatus.FORWARD_LOOKING
+    assert res["citation_valid"] is False
+    assert res["unresolved_citations"] == ["METHOD_001"]
+    assert "CITATION REJECTED" in res["reason"]
+
+
+def test_forward_looking_claim_with_no_citation_is_clean(semantic_fn):
+    claim = make_claim(claim_text="In weeks 1 to 3 the team will map the process",
+                       requires_verification=False)
+    res = verify_claim(claim, {}, semantic_fn)
+    assert res["status"] == VerificationStatus.FORWARD_LOOKING
+    assert res["citation_valid"] is True
