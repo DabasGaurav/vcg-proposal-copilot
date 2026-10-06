@@ -20,8 +20,8 @@ import streamlit as st
 import config
 import ui
 from models.schemas import ReviewDecision, VerificationStatus
-from pipeline import export, review
-from pipeline.graph import load_run, run_pipeline
+from pipeline import export, qualification, review
+from pipeline.graph import continue_approved_pipeline, load_run, run_pipeline
 from pipeline.traceability import evidence_display_id
 from services.persistence import get_store
 from services.vectorstore import VectorStore
@@ -49,6 +49,12 @@ H = {"unsafe_allow_html": True}
 with st.sidebar:
     st.markdown("#### Proposal Copilot")
     st.markdown('<div class="note">RFP to source-grounded, review-ready proposal</div>', **H)
+    if config.LLM_PROVIDER == "ollama":
+        st.caption(f"Local AI: {config.LLM_MODEL}. Documents stay on this machine.")
+    elif config.LLM_PROVIDER == "mock":
+        st.warning("Simulation mode: the deterministic mock is for testing, not a live AI demo.")
+    else:
+        st.warning("Hosted model mode: documents are sent to the configured provider.")
     st.divider()
 
     fixtures = sorted(p.name for p in config.FIXTURE_DIR.glob("*.md"))
@@ -59,10 +65,11 @@ with st.sidebar:
              "evaluation criteria.")
     uploaded = st.file_uploader("Or upload a document", type=["md", "txt", "pdf"])
     web = st.checkbox("Include external market context", value=False,
+                      disabled=config.LLM_PROVIDER in {"ollama", "mock"},
                       help="Supplies industry background only. External sources are "
                            "never cited as evidence of the firm's experience.")
 
-    if st.button("Generate proposal", type="primary", use_container_width=True):
+    if st.button("Assess bid fit", type="primary", use_container_width=True):
         if uploaded is not None:
             dest = config.DATA_DIR / f"upload_{uploaded.name}"
             dest.write_bytes(uploaded.getbuffer())
@@ -71,7 +78,8 @@ with st.sidebar:
             rfp_path = str(config.FIXTURE_DIR / choice)
         with st.spinner("Processing…"):
             try:
-                st.session_state.state = run_pipeline(rfp_path, web_search=web)
+                st.session_state.state = run_pipeline(
+                    rfp_path, web_search=web)
                 st.session_state.rfp_name = choice if uploaded is None else uploaded.name
             except Exception as exc:                       # keep the interface usable
                 st.session_state.state = None
@@ -79,13 +87,18 @@ with st.sidebar:
 
     if st.session_state.get("state"):
         s = st.session_state.state
-        d = s["proposal_draft"]
-        st.markdown(
-            f'<div class="pills">{ui.pill("SUPPORTED", str(d.supported_claim_count))}'
-            f'{ui.pill("PARTIAL", str(d.partial_claim_count))}'
-            f'{ui.pill("GAP", str(d.gap_claim_count))}</div>', **H)
-        st.markdown(f'<div class="note">Run {s["run_id"][:12]} · '
-                    f'{len(s["overall_traceability"])} traceability records</div>', **H)
+        if s.get("proposal_draft"):
+            d = s["proposal_draft"]
+            st.markdown(
+                f'<div class="pills">{ui.pill("SUPPORTED", str(d.supported_claim_count))}'
+                f'{ui.pill("PARTIAL", str(d.partial_claim_count))}'
+                f'{ui.pill("GAP", str(d.gap_claim_count))}</div>', **H)
+            st.markdown(f'<div class="note">Run {s["run_id"][:12]} · '
+                        f'{len(s["overall_traceability"])} traceability records</div>', **H)
+        else:
+            st.caption(f"Run {s['run_id'][:12]} · awaiting practice-lead decision")
+        if s.get("generation_provider") == "mock" and config.LLM_PROVIDER == "ollama":
+            st.caption("This saved run was prepared in simulation mode; section regeneration uses local AI.")
 
     st.divider()
     st.markdown('<div class="sec-h">Saved runs</div>', **H)
@@ -111,6 +124,44 @@ with st.sidebar:
 # Entry state
 # --------------------------------------------------------------------------- #
 state = st.session_state.get("state")
+if state and not state.get("proposal_draft"):
+    q = state.get("qualification") or {}
+    st.title("Bid qualification")
+    st.caption("Screening aid based on selected firm evidence. A practice lead makes the decision.")
+    st.metric("Evidence fit", "Unscored" if q.get("score") is None else f"{q['score']}%")
+    st.write(q.get("reason", ""))
+    if q.get("crm_client_match") is False:
+        st.warning("The sample CRM client differs from the RFP client. Confirm the opportunity record.")
+    with st.expander("Prototype system inputs"):
+        st.caption("Local fictional sample files represent CRM, HR, rate-card, and time/billing inputs. No live integrations are claimed.")
+        for name, record in (state.get("system_inputs") or {}).items():
+            st.write(f"**{name.replace('_', ' ').title()}** — {record.get('source', 'sample')}")
+    st.write(f"{q.get('covered_requirements', 0)} of {q.get('evidence_requirements', 0)} "
+             "evidence requirements have selected passages.")
+    if q.get("mandatory_gap_ids"):
+        st.error("Mandatory evidence gaps: " + ", ".join(q["mandatory_gap_ids"]))
+    decision = state.get("practice_lead_decision") or {}
+    if decision.get("decision") == "NO_BID":
+        st.warning("No-bid decision recorded. No proposal draft was generated.")
+        st.stop()
+    lead = st.text_input("Practice lead name", key="qual_lead")
+    rationale = st.text_area("Decision rationale", key="qual_reason")
+    b1, b2 = st.columns(2)
+    if b1.button("Approve bid and generate draft", type="primary"):
+        try:
+            qualification.record_decision(state, "BID", lead, rationale)
+            with st.spinner("Drafting after practice-lead approval…"):
+                st.session_state.state = continue_approved_pipeline(state)
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+    if b2.button("Record no-bid"):
+        try:
+            qualification.record_decision(state, "NO_BID", lead, rationale)
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+    st.stop()
 if not state:
     st.markdown(
         """
@@ -147,12 +198,12 @@ if not state:
     st.markdown(
         '<div class="flow">'
         '<span>Ingest</span><span>Extract</span><span>Validate</span>'
-        '<span>Retrieve</span><span>Rank</span><span>Draft</span>'
+        '<span>Retrieve</span><span>Qualify</span><span>Draft</span>'
         '<span>Decompose</span><span>Verify</span>'
         '<span class="gate">Review</span><span>Release</span></div>', **H)
     st.markdown(
         '<div class="cta">Select a sample RFP in the panel on the left and choose '
-        '<b>Generate proposal</b>. The <b>ABC Bank</b> scenario contains a '
+        '<b>Assess bid fit</b>. The <b>ABC Bank</b> scenario contains a '
         'performance claim that the evidence base does not substantiate.</div>', **H)
     st.stop()
 
@@ -473,6 +524,14 @@ with tab_exec:
     st.markdown('<div class="sec-h">Processing record</div>', **H)
     st.dataframe(pd.DataFrame(state["execution_log"]), use_container_width=True,
                  hide_index=True)
+    usage_events = state.get("model_usage") or []
+    if usage_events:
+        st.markdown('<div class="sec-h">Local model usage</div>', **H)
+        st.dataframe(pd.DataFrame(usage_events), use_container_width=True, hide_index=True)
+        st.download_button("Download model usage (CSV)",
+                           pd.DataFrame(usage_events).to_csv(index=False),
+                           file_name=f"model_usage_{state['run_id'][:8]}.csv",
+                           mime="text/csv")
     if state.get("web_evidence"):
         st.markdown('<div class="sec-h">External context</div>', **H)
         st.markdown('<div class="note">Retained for background only. External sources '
@@ -498,6 +557,26 @@ with tab_review:
         "Release gate open" if export_ok else "Release gate closed",
         "All sections have been approved and no unsubstantiated claims remain."
         if export_ok else "; ".join(export_reasons) + "."), **H)
+    st.write("")
+
+    st.markdown('<div class="sec-h">Commercial sign-off</div>', **H)
+    price_approval = state.get("price_approval")
+    if price_approval:
+        st.success("Partner approved commercial response: " +
+                   price_approval["commercial_reference"])
+    else:
+        st.caption("The partner approves the separate price or rate-card reference before release.")
+        price_reviewer = st.text_input("Partner name", key="price_reviewer")
+        sample_rate_ref = (state.get("system_inputs") or {}).get("rate_card", {}).get("reference", "")
+        price_reference = st.text_input("Commercial response or rate-card reference",
+                                        value=sample_rate_ref, key="price_reference")
+        price_note = st.text_input("Approval note", key="price_note")
+        if st.button("Approve commercial response"):
+            try:
+                review.approve_price(state, price_reviewer, price_reference, price_note)
+                st.rerun()
+            except Exception as exc:
+                st.error(str(exc))
     st.write("")
 
     st.markdown('<div class="sec-h">Section approval</div>', **H)

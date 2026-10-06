@@ -1,0 +1,7 @@
+{
+  "source": "fictional_sample_hr",
+  "people": [
+    {"name": "Ananya Mehta", "role": "Partner", "skills": ["retail lending", "credit operations"], "evidence_document": "CV_001"},
+    {"name": "Rohan Sen", "role": "Principal", "skills": ["SME lending", "underwriting"], "evidence_document": "CV_002"}
+  ]
+}

@@ -1,22 +1,24 @@
 # Proposal Copilot Agent
 
-**▶ Live demo: <https://rfp-proposal.streamlit.app/>** — no install, no API key.
-Pick `abc_bank_lending_transformation`, press **Run pipeline**, open the
-**Traceability** tab.
+**▶ Public simulation: <https://rfp-proposal.streamlit.app/>** — hosted URL for
+the deterministic fixture workflow. It is not a live AI demonstration and may
+still be running an earlier repository version until this branch is deployed.
+For live, fully offline generative AI, run the app locally with Ollama as below.
 
 Turns an inbound RFP into a source-grounded, review-ready proposal with full
-**Requirement → Evidence → Draft** traceability, **deterministic** (non-LLM-judged)
-evidence-consistency verification, and a hard architectural gate that requires
-human approval of every section before any export.
+**Requirement → Evidence → Draft** traceability and deterministic evidence
+consistency checks. A practice lead must approve the bid before drafting;
+reviewers approve sections and a partner approves the commercial reference
+before export.
 
 Built to the spec in [`SPEC.md`](SPEC.md) (a VCG case brief — "VCG" is a
 fictional firm; the corpus and RFP fixtures are synthetic). **Core + Should-have
 + selected Stretch** are implemented: end-to-end pipeline (RFP → approved
 proposal), traceability matrix, deterministic verifier, Streamlit hero screen,
 section-level approval with edit preservation, SQLite audit log, conflict
-detection, run resumability, real-LLM path (LiteLLM), optional web enrichment
-(Tavily / DDG), Phase-0 calibration that writes thresholds to `.env`, and
-Markdown / CSV / DOCX export. **70 tests, all green.**
+detection, run resumability, local AI via Ollama, optional hosted LiteLLM,
+Phase-0 calibration, and Markdown / CSV / DOCX export. CRM, HR, rate-card,
+and time/billing inputs are fictional local sample files, not live integrations.
 
 ## The hero moment
 
@@ -36,9 +38,24 @@ python -m venv .venv && source .venv/bin/activate     # Python 3.11+
 pip install -r requirements.txt
 python scripts/seed_corpus.py        # build the vector KB from data/corpus/*.md
 python scripts/calibrate.py          # Phase 0: print real scores, propose thresholds
-pytest -q                            # 58 tests, all green
+pytest -q                            # run the current test suite
 streamlit run app.py                 # RFP → Requirements → Execution → Evidence → Draft → 🎯 Traceability → Review
 ```
+
+The default `LLM_PROVIDER=mock` is deterministic simulation for rehearsals and
+tests. To demonstrate real generation without sending documents off-device,
+install Ollama, download a local model once, then run:
+
+```bash
+ollama pull gemma3
+LLM_PROVIDER=ollama LLM_MODEL=gemma3:latest streamlit run app.py
+```
+
+Ollama must be running locally. Model download needs internet once; inference
+afterward uses `127.0.0.1`. On a modest laptop, extraction may take a minute or
+more and quality varies with the document. Rehearse the exact RFP beforehand.
+The app's Execution tab records local model token counts and latency. No API
+charge is incurred for local inference; hardware and electricity still have costs.
 
 Deterministic CLI demo (no API key, no network):
 
@@ -53,10 +70,11 @@ python scripts/run_demo.py def_capital_no_rubric.md         # no eval criteria +
 
 ```
 intake → decompose_rfp → validate_requirements (source-span gate; ungrounded → dropped)
-  → plan_response → retrieve_internal → rank_evidence (select/reject w/ reasons) → detect_conflicts
-  → optional_web_enrichment (off by default; background only, never a VCG credential)
+  → plan_response → retrieve_internal → rank_evidence (select/reject w/ reasons)
+  → qualify → practice-lead BID/NO_BID decision
+  → detect_conflicts → optional_web_enrichment (disabled in offline modes)
   → draft_sections → extract_atomic_claims → deterministic_verify → build_traceability
-  → await_human_review   ← the pipeline stops here; nothing exports without approval
+  → section review + partner commercial sign-off → export
 ```
 
 Orchestrator is a **plain ordered function chain** (SPEC §0 fallback), each stage
@@ -84,7 +102,7 @@ every error category the demo corpus is built to surface and nothing beyond that
 | Concern | Default | Alternative |
 |---|---|---|
 | Orchestrator | plain ordered function chain (§0) | — (LangGraph deliberately not used; same audit/demo value) |
-| LLM (extract / plan / draft / decompose) | `LLM_PROVIDER=mock` — deterministic, fixture-aware, zero API keys | `LLM_PROVIDER=litellm` + `LLM_MODEL` → real calls via LiteLLM (`services/real_llm.py`; prompts emit the same `[[ev:]]`/`[[req:]]` citation convention the verifier needs) |
+| LLM (extract / plan / draft / decompose) | `LLM_PROVIDER=mock` — deterministic simulation | `LLM_PROVIDER=ollama` + local model for real offline AI; optional `litellm` sends data to a hosted provider |
 | Embeddings | `EMBEDDINGS_BACKEND=tfidf` — scikit-learn, fit on the seeded corpus, no download | `sentence-transformers` (`all-MiniLM-L6-v2`) |
 | Vector store | local numpy matrix, pickle-persisted | ChromaDB (`VECTORSTORE_BACKEND=chroma`) |
 | Web enrichment | `WEB_SEARCH_PROVIDER=mock`, disabled | `tavily` (needs `TAVILY_API_KEY`) or `ddg` (needs `duckduckgo_search`); background context only, never a VCG credential |
@@ -117,7 +135,7 @@ pipeline/                 one module per stage + graph.py orchestrator + review.
 services/real_llm.py      LiteLLM prompts for the 4 delegated ops (mock stays default)
 services/web_search.py    mock / Tavily / DDG providers + VCG-credential guardrail
 scripts/                  seed_corpus · calibrate (Phase 0, writes .env) · run_demo
-tests/                    70 tests; verifier cases (SPEC §15) written first
+tests/                    verifier and approval-gate tests
 app.py                    Streamlit hero screen
 ```
 
@@ -131,6 +149,7 @@ app.py                    Streamlit hero screen
   never silently resolved.
 - ≥5 proposal sections; each cites only selected evidence; gaps written as
   `[EVIDENCE GAP: …]`, human-only content as `HUMAN INPUT REQUIRED`.
-- No code path exports without every section `APPROVED`; unresolved `GAP`s block
-  export unless overridden with a recorded reason.
+- No code path drafts before a recorded practice-lead BID decision. No code path
+  exports without every section approved and a partner commercial sign-off;
+  unresolved gaps block export unless overridden with a recorded reason.
 - The system never sends or submits anything externally.

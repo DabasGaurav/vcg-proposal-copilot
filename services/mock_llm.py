@@ -102,7 +102,7 @@ def extract_requirements(rfp_text: str, filename: str = "") -> dict:
     timeline = _first_sentence(sec.get("timeline", "")) or None
 
     if timeline:
-        add(timeline, "CONTENT", "NEEDS_EVIDENCE", timeline, "Proposed Approach & Workplan",
+        add(timeline, "CONTENT", "TEMPLATE_SATISFIABLE", timeline, "Proposed Approach & Workplan",
             0.82, _mandatory(timeline))
 
     scope_items = bullets(sec.get("scope of work", "")) or bullets(sec.get("scope", ""))

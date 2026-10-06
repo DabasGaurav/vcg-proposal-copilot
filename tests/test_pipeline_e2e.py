@@ -3,7 +3,14 @@ from __future__ import annotations
 
 import config
 from models.schemas import RequirementHandling, VerificationStatus
-from pipeline.graph import run_pipeline
+from pipeline.graph import continue_approved_pipeline, run_pipeline
+from pipeline.qualification import record_decision
+
+
+def approved_run(path):
+    state = run_pipeline(str(path), persist=False)
+    record_decision(state, "BID", "fixture practice lead", "Test fixture")
+    return continue_approved_pipeline(state, persist=False)
 
 
 def test_abc_happy_path_end_to_end(abc_state):
@@ -15,8 +22,7 @@ def test_abc_happy_path_end_to_end(abc_state):
 
 
 def test_xyz_capability_gap_run_still_completes():
-    st = run_pipeline(str(config.FIXTURE_DIR / "xyz_insurer_actuarial_ai.md"),
-                      persist=False)
+    st = approved_run(config.FIXTURE_DIR / "xyz_insurer_actuarial_ai.md")
     handlings = {r.handling for r in st["rfp_data"].requirements}
     assert RequirementHandling.CAPABILITY_GAP in handlings
     assert st["proposal_draft"] is not None            # run did not fail outright
@@ -25,8 +31,7 @@ def test_xyz_capability_gap_run_still_completes():
 
 
 def test_pqr_procedural_items_all_land_in_checklist():
-    st = run_pipeline(str(config.FIXTURE_DIR / "pqr_bank_procurement_heavy.md"),
-                      persist=False)
+    st = approved_run(config.FIXTURE_DIR / "pqr_bank_procurement_heavy.md")
     joined = " ".join(st["procedural_checklist"]).lower()
     for token in ("declaration", "arial", "reference", "commercial response", "portal"):
         assert token in joined

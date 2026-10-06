@@ -13,6 +13,7 @@ from pipeline import claims as claims_stage
 from pipeline import drafting as drafting_stage
 from pipeline import traceability as traceability_stage
 from pipeline import verification as verification_stage
+from services.llm import reset_usage_sink, set_usage_sink
 from services.persistence import get_store
 from state.graph_state import ProposalAgentState
 
@@ -87,12 +88,16 @@ def regenerate_section(state: ProposalAgentState, section_title: str) -> Proposa
 
 
 def _regen_verify(state, section_title, *, redraft: bool) -> None:
-    if redraft:
-        drafting_stage.run(state, only_section=section_title)
-    claims_stage.run(state, only_section=section_title)
-    verification_stage.run(state, semantic_fn=state.get("_semantic_fn"))
-    traceability_stage.run(state)
-    _recompute_status(state)
+    token = set_usage_sink(state.setdefault("model_usage", []))
+    try:
+        if redraft:
+            drafting_stage.run(state, only_section=section_title)
+        claims_stage.run(state, only_section=section_title)
+        verification_stage.run(state, semantic_fn=state.get("_semantic_fn"))
+        traceability_stage.run(state)
+        _recompute_status(state)
+    finally:
+        reset_usage_sink(token)
 
 
 def _persist(state) -> None:
@@ -133,9 +138,32 @@ def override_gap(state, trace_id: str, reason: str, reviewer: str = "reviewer") 
     _persist(state)
 
 
+def approve_price(state, reviewer: str, commercial_reference: str,
+                  note: str) -> None:
+    """Record partner sign-off for the separately prepared commercial response."""
+    if not reviewer.strip() or not commercial_reference.strip() or not note.strip():
+        raise ValueError("partner name, commercial reference, and approval note are required")
+    decision = state.get("practice_lead_decision") or {}
+    if decision.get("decision") != "BID":
+        raise PermissionError("Practice lead must approve the bid before price sign-off")
+    state["price_approval"] = {
+        "reviewer": reviewer.strip(),
+        "commercial_reference": commercial_reference.strip(),
+        "note": note.strip(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    get_store().log(state["run_id"], "price_approval", "APPROVED", actor="human",
+                    notes=f"{reviewer.strip()}: {commercial_reference.strip()}")
+    _persist(state)
+
+
 def can_export(state) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     draft = state["proposal_draft"]
+    if (state.get("practice_lead_decision") or {}).get("decision") != "BID":
+        reasons.append("practice lead has not approved a BID decision")
+    if not state.get("price_approval"):
+        reasons.append("partner has not approved the commercial response")
     not_approved = [s.title for s in draft.sections
                     if s.review_status != ReviewDecision.APPROVED]
     if not_approved:

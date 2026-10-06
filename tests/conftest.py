@@ -42,11 +42,14 @@ def semantic_fn(store):
 @pytest.fixture
 def abc_state():
     """Full pipeline run on the happy-path fixture (no web, no persistence)."""
-    from pipeline.graph import run_pipeline
-    return run_pipeline(
+    from pipeline.graph import continue_approved_pipeline, run_pipeline
+    from pipeline.qualification import record_decision
+    state = run_pipeline(
         str(config.FIXTURE_DIR / "abc_bank_lending_transformation.md"),
         web_search=False, persist=False,
     )
+    record_decision(state, "BID", "fixture practice lead", "Test fixture")
+    return continue_approved_pipeline(state, persist=False)
 
 
 def make_claim(**kw):

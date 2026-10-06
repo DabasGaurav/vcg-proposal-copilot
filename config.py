@@ -50,8 +50,9 @@ DB_PATH = Path(_get("DB_PATH", str(DATA_DIR / "proposal_copilot.sqlite")))
 CHROMA_PATH = Path(_get("CHROMA_PATH", str(ROOT / ".chroma")))
 
 # --- LLM ------------------------------------------------------------------
-LLM_PROVIDER = _get("LLM_PROVIDER", "mock")            # mock | litellm
-LLM_MODEL = _get("LLM_MODEL", "anthropic/claude-sonnet-5")
+LLM_PROVIDER = _get("LLM_PROVIDER", "mock")            # mock | ollama | litellm
+LLM_MODEL = _get("LLM_MODEL", "gemma3:latest" if LLM_PROVIDER == "ollama"
+                 else "anthropic/claude-sonnet-5")
 
 # --- Embeddings --------------------------------------------------------------
 EMBEDDINGS_BACKEND = _get("EMBEDDINGS_BACKEND", "tfidf")

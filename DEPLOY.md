@@ -1,68 +1,42 @@
-# Deploying the demo (zero-setup URL for evaluators)
+# Demonstration setup
 
-The app runs **fully offline** — deterministic mock LLM, TF-IDF embeddings, local
-vector store that builds itself on first load. No API keys, no secrets, nothing
-to configure. An evaluator just opens the URL and drives it.
+## Full offline AI demonstration (recommended for the course)
 
-## Option A — Streamlit Community Cloud (recommended, free)
-
-1. Push this repo to GitHub (already done if you're reading this on GitHub).
-2. Go to <https://share.streamlit.io> → **Sign in with GitHub**.
-3. **New app** → pick:
-   - Repository: `DabasGaurav/vcg-proposal-copilot`
-   - Branch: `main`
-   - Main file path: `app.py`
-4. **Deploy**. First build takes ~2–3 min (installs `requirements.txt`, then the
-   app seeds the knowledge base on first open — a one-time ~5 s step).
-5. You get `https://<name>.streamlit.app`. Share that link.
-
-### If the repo is private
-Streamlit will ask to authorise access to your private repos during "New app".
-Grant it. (Or make the repo public: GitHub → Settings → Change visibility.)
-
-### Keep it warm for judging
-Community Cloud sleeps an idle app after ~7 days and cold-starts in ~30 s. Open
-the URL yourself ~10 min before the session so it's hot.
-
-### Notes
-- `runtime.txt` pins Python 3.11.
-- `.streamlit/config.toml` sets the theme and headless server options.
-- Storage on Community Cloud is ephemeral: the SQLite audit log / resumable runs
-  reset on redeploy. Fine for a demo; each fresh session still shows the full
-  audit trail for runs done in that session.
-- To route through a real model instead of the mock, set the app's **Secrets**
-  in the Community Cloud dashboard:
-  ```
-  LLM_PROVIDER = "litellm"
-  LLM_MODEL = "anthropic/claude-sonnet-5"
-  ANTHROPIC_API_KEY = "sk-ant-..."
-  ```
-  Leave them unset for the demo — the mock is what makes the run reproducible.
-
-## Option B — Hugging Face Spaces
-
-Create a Space → SDK **Streamlit** → push this repo to it. Same `app.py`,
-same `requirements.txt`. Also free, also public URL.
-
-## Option C — Docker (any container host)
-
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-RUN python scripts/seed_corpus.py
-EXPOSE 8501
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
-```
+Run the application and Ollama on the same laptop. Install dependencies with
+`pip install -r requirements.txt`, install Ollama, and download the model once
+while connected to the internet:
 
 ```bash
-docker build -t vcg-copilot . && docker run -p 8501:8501 vcg-copilot
+ollama pull gemma3
+python scripts/seed_corpus.py
+LLM_PROVIDER=ollama LLM_MODEL=gemma3:latest streamlit run app.py
 ```
 
-## Backup that cannot fail on stage
+After the model is downloaded, the app calls only `127.0.0.1` for generation.
+Keep **Include external market context** disabled; the UI disables it in local
+mode. The CRM, HR, rate-card, and time/billing records are fictional files in
+`data/sample_systems/`. There are no live enterprise-system connections.
 
-`python scripts/run_demo.py` prints the traceability matrix and the 18 % / 35 %
-result in a terminal — no browser, no server. Record a short screen capture of
-the Streamlit walkthrough as a second fallback.
+Test the entire path on the presentation laptop. Local extraction can be slow,
+especially on long PDFs. Prepare a full run in advance and time a short live
+section demonstration. Clearly label prepared and live outputs. Show the active
+provider and token/latency log in the Execution tab.
+
+## Public URL (simulation only)
+
+The Streamlit Community Cloud URL, if deployed, runs the deterministic mock
+unless an external provider is explicitly configured. It is useful for a
+zero-install walkthrough but is not evidence that a live model generated the
+proposal. A public Streamlit server cannot use the presenter's local Ollama
+instance. The current public URL may run an older version until the updated
+repository is deployed.
+
+On Community Cloud, choose this repository and `app.py` as the entry point.
+Storage is ephemeral, so saved runs may disappear after restart or redeploy.
+Never upload confidential client documents to that public demo.
+
+## Backup
+
+`python scripts/run_demo.py` exercises the deterministic fixture and prints the
+18% supported versus 35% unsupported traceability example. It is a backup
+simulation, not a substitute for showing local AI generation.
