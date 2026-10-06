@@ -414,9 +414,15 @@ def draft_section(
 # --------------------------------------------------------------------------- #
 # 4. Claim decomposition
 # --------------------------------------------------------------------------- #
-_CITE_RE = re.compile(r"\[\[ev:([A-Za-z0-9_\-:.]+)\]\]")
-_REQ_RE = re.compile(r"\[\[req:([A-Za-z0-9_\-]+)\]\]")
-_TAG_RE = re.compile(r"\[\[(?:ev|req):[A-Za-z0-9_\-:.]+\]\]")
+# Tag parsing is deliberately tolerant. A local model does not close a bracket
+# pair reliably -- observed output includes "[[ev:X>]" and "[req:Y]" -- and a
+# dropped citation would silently turn a grounded claim into an orphan GAP,
+# which is a far worse failure than a lenient regex. Anything the model emits
+# is still only a *candidate* id: verification.py resolves it against the
+# selected-evidence index and rejects whatever does not exist.
+_CITE_RE = re.compile(r"\[{1,2}\s*ev\s*:\s*([A-Za-z0-9_\-:.]+?)\s*[\]>)]{1,2}")
+_REQ_RE = re.compile(r"\[{1,2}\s*req\s*:\s*([A-Za-z0-9_\-]+?)\s*[\]>)]{1,2}")
+_TAG_RE = re.compile(r"\[{1,2}\s*(?:ev|req)\s*:\s*[A-Za-z0-9_\-:.]+?\s*[\]>)]{1,2}")
 # past-tense VCG achievement verbs -- only these (plus a number or a named person)
 # make a sentence a historical claim that must be verified. Framing sentences
 # ("we have read the RFP", "we propose...") are not historical claims.

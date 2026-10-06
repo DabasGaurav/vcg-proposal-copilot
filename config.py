@@ -54,6 +54,8 @@ LLM_PROVIDER = _get("LLM_PROVIDER", "mock")            # mock | ollama | litellm
 LLM_MODEL = _get("LLM_MODEL", "gemma3:latest" if LLM_PROVIDER == "ollama"
                  else "anthropic/claude-sonnet-5")
 
+OLLAMA_NUM_CTX = int(_get_float("OLLAMA_NUM_CTX", 8192))   # 4096 truncates drafting prompts
+
 # --- Embeddings --------------------------------------------------------------
 EMBEDDINGS_BACKEND = _get("EMBEDDINGS_BACKEND", "tfidf")
 EMBEDDINGS_MODEL = _get("EMBEDDINGS_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
@@ -95,6 +97,16 @@ LEX_SUPPORTED = _get_float("LEX_SUPPORTED", 0.218)
 # numeric matcher tolerance (SPEC Section 15)
 NUMERIC_ABS_TOLERANCE = 0.5          # percentage points / absolute units
 NUMERIC_CONTEXT_WINDOW = 20          # +/- tokens around a number when checking consistency
+
+# --- Cost model (services/costing.py) -------------------------------------
+# ASSUMPTIONS, not measurements. Set from live pricing before quoting a figure;
+# costing.assumptions() surfaces every one of these next to the numbers.
+USD_INR = _get_float("USD_INR", 89.0)                    # exchange rate
+API_USD_PER_MTOK_INPUT = _get_float("API_USD_PER_MTOK_INPUT", 3.00)
+API_USD_PER_MTOK_OUTPUT = _get_float("API_USD_PER_MTOK_OUTPUT", 15.00)
+LOCAL_DEVICE_WATTS = _get_float("LOCAL_DEVICE_WATTS", 30.0)   # laptop draw while generating
+ELECTRICITY_INR_PER_KWH = _get_float("ELECTRICITY_INR_PER_KWH", 8.0)
+GPU_INR_PER_HOUR = _get_float("GPU_INR_PER_HOUR", 110.0)      # rented inference GPU
 
 # --- Export gating ------------------------------------------------------
 ALLOW_GAP_OVERRIDE = True            # unresolved GAPs block export unless explicitly overridden w/ reason

@@ -316,10 +316,18 @@ with tab_over:
 # Traceability
 # --------------------------------------------------------------------------- #
 with tab_trace:
-    hero_18 = next((e for e in entries if "18 percent" in e.claim_text
-                    and e.verification_status == VerificationStatus.SUPPORTED), None)
-    hero_35 = next((e for e in entries if "35 percent" in e.claim_text
-                    and e.verification_status == VerificationStatus.GAP), None)
+    # The contrast pair is derived, not hard-coded: the best-substantiated
+    # numeric claim beside the numeric claim the evidence refused. On the demo
+    # tender these are the 18% and 35% figures; on any other tender the panel
+    # still works because nothing here matches on a literal value.
+    def _numeric(e):
+        return any(ch.isdigit() for ch in e.claim_text) and e.claim_id != "(none)"
+
+    hero_18 = max((e for e in entries
+                   if e.verification_status == VerificationStatus.SUPPORTED and _numeric(e)),
+                  key=lambda e: e.confidence_score, default=None)
+    hero_35 = next((e for e in entries
+                    if e.verification_status == VerificationStatus.GAP and _numeric(e)), None)
     if hero_18 or hero_35:
         hc1, hc2 = st.columns(2)
         if hero_18:
@@ -526,12 +534,66 @@ with tab_exec:
                  hide_index=True)
     usage_events = state.get("model_usage") or []
     if usage_events:
-        st.markdown('<div class="sec-h">Local model usage</div>', **H)
+        from services import costing
+        cost = costing.session_cost(usage_events)
+        scale = costing.at_scale(usage_events)
+
+        st.markdown('<div class="sec-h">Measured cost of this session</div>', **H)
+        st.markdown(ui.tiles([
+            ("Model", cost["model"] or "—", f'{cost["provider"]} · {cost["calls"]} calls',
+             ui.BRAND),
+            ("Input tokens", f'{cost["input_tokens"]:,}', "measured", ui.MUTED),
+            ("Output tokens", f'{cost["output_tokens"]:,}', "measured", ui.MUTED),
+            ("Generation time", f'{cost["seconds"]:.0f}s', "wall clock", ui.MUTED),
+            ("Local cost", f'₹{cost["local_inr"]:.3f}', "electricity only",
+             ui.STATUS["SUPPORTED"]["fill"]),
+            ("Hosted equivalent", f'₹{cost["api_equivalent_inr"]:.2f}',
+             "same tokens, cloud API", ui.STATUS["PARTIAL"]["fill"]),
+        ]), **H)
+        st.markdown(
+            f'<div class="note">Running the model locally costs '
+            f'<b>₹{cost["local_inr"]:.3f}</b> per proposal in electricity and sends '
+            f'nothing off the machine. The same workload on a hosted API would cost '
+            f'<b>₹{cost["api_equivalent_inr"]:.2f}</b> — faster and higher quality, '
+            f'but the tender and the firm\'s evidence would leave the tenant.</div>', **H)
+
+        st.write("")
+        st.markdown('<div class="sec-h">At 10,000 users · one proposal each per month</div>', **H)
+        st.markdown(ui.tiles([
+            ("Sessions", f'{scale["sessions"]:,}', "per month", ui.BRAND),
+            ("Input tokens", f'{scale["input_tokens"]/1e6:.1f}M', "per month", ui.MUTED),
+            ("Output tokens", f'{scale["output_tokens"]/1e6:.1f}M', "per month", ui.MUTED),
+            ("Hosted API", f'₹{scale["api_monthly_inr"]:,.0f}', "per month",
+             ui.STATUS["PARTIAL"]["fill"]),
+            ("Self-hosted GPU", f'₹{scale["self_hosted_monthly_inr"]:,.0f}',
+             f'{scale["self_hosted_gpu_hours"]:,.0f} GPU-hours', ui.STATUS["SUPPORTED"]["fill"]),
+        ]), **H)
+        st.markdown(
+            '<div class="note">A single laptop cannot serve this concurrency, so at '
+            'scale the choice is hosted inference or dedicated GPU capacity. Self-hosting '
+            'keeps the offline guarantee and the cost becomes capacity, not tokens; the '
+            'hosted route is cheaper to start and faster per request.</div>', **H)
+
+        with st.expander("Assumptions behind these figures"):
+            st.markdown('<div class="note">Token counts and elapsed time are measured. '
+                        'Every rate below is an assumption — set them in config.py from '
+                        'live pricing before quoting a number.</div>', **H)
+            st.dataframe(pd.DataFrame(costing.assumptions(),
+                                      columns=["Assumption", "Value"]),
+                         use_container_width=True, hide_index=True)
+
+        st.markdown('<div class="sec-h">Per-call record</div>', **H)
         st.dataframe(pd.DataFrame(usage_events), use_container_width=True, hide_index=True)
         st.download_button("Download model usage (CSV)",
                            pd.DataFrame(usage_events).to_csv(index=False),
                            file_name=f"model_usage_{state['run_id'][:8]}.csv",
                            mime="text/csv")
+    else:
+        st.markdown('<div class="sec-h">Model usage</div>', **H)
+        st.markdown('<div class="note">This run used the deterministic offline '
+                    'generator, so no model tokens were consumed. Run with '
+                    '<code>LLM_PROVIDER=ollama</code> to record measured local usage '
+                    'and cost.</div>', **H)
     if state.get("web_evidence"):
         st.markdown('<div class="sec-h">External context</div>', **H)
         st.markdown('<div class="note">Retained for background only. External sources '

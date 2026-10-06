@@ -128,7 +128,11 @@ class LLM:
                     {"role": "user", "content": user},
                 ],
                 "stream": False,
-                "options": {"temperature": 0},
+                # num_ctx: the Ollama default of 4096 silently truncates a
+                # drafting prompt that carries several evidence passages, which
+                # makes the model invent rather than cite. temperature 0 keeps a
+                # re-run reproducible.
+                "options": {"temperature": 0, "num_ctx": config.OLLAMA_NUM_CTX},
             }
             if stage in BY_STAGE:
                 payload["format"] = BY_STAGE[stage]

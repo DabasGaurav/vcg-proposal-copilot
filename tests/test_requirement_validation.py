@@ -64,3 +64,15 @@ def test_compound_split_only_on_real_enumerations():
         "Diagnose the current process; redesign the workflow; define a capacity model"
     )
     assert len(parts) == 3
+
+
+def test_unreadable_document_refuses_to_draft(tmp_path):
+    """A document the extractor cannot read must stop the run, not silently
+    produce a confident proposal from zero requirements."""
+    import pytest
+    from pipeline.graph import run_pipeline
+
+    flat = tmp_path / "flat.md"
+    flat.write_text("Meridian Health seeks a partner. The work must finish soon.\n")
+    with pytest.raises(ValueError, match="No requirements could be extracted"):
+        run_pipeline(str(flat), persist=False)

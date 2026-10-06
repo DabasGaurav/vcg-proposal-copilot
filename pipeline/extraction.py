@@ -62,6 +62,19 @@ def run(state: ProposalAgentState) -> ProposalAgentState:
     ]
     valid_reqs = [r for r in requirements if r.valid]
 
+    # Fail loudly rather than drafting a confident proposal from nothing. A
+    # document the extractor cannot read at all (an unstructured tender, a bad
+    # PDF text layer) previously produced zero requirements and still emitted a
+    # full seven-section proposal, with every stage logging "ok".
+    if not valid_reqs:
+        raise ValueError(
+            f"No requirements could be extracted from {state.get('rfp_filename', 'the document')}. "
+            f"{len(requirements)} candidate(s) were found and "
+            f"{len(requirements) - len(valid_reqs)} failed source-span validation. "
+            "The document may be unstructured, image-only, or not a tender. "
+            "Refusing to draft a proposal with no requirements to answer."
+        )
+
     # capability gaps are a human go/no-go signal -- keep them visible even though
     # they are not "valid evidence" requirements.
     cap_gaps = [r for r in valid_reqs if r.handling == RequirementHandling.CAPABILITY_GAP]
