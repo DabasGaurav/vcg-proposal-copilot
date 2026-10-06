@@ -56,6 +56,23 @@ LLM_MODEL = _get("LLM_MODEL", "gemma3:latest" if LLM_PROVIDER == "ollama"
 
 OLLAMA_NUM_CTX = int(_get_float("OLLAMA_NUM_CTX", 8192))   # 4096 truncates drafting prompts
 
+# Per-stage provider routing. Extraction and planning are structural work with a
+# source-span validation gate behind them; a small local model made them WORSE,
+# producing requirements that retrieved nothing. Generation is where a model
+# genuinely earns its place, so drafting and claim decomposition follow
+# LLM_PROVIDER while the structural stages stay deterministic unless explicitly
+# overridden with LLM_ALL_STAGES=true.
+LLM_ALL_STAGES = _get_bool("LLM_ALL_STAGES", False)
+_GENERATIVE_STAGES = {"draft_sections", "claim_split"}
+
+
+def provider_for(stage: str) -> str:
+    """Which provider handles a given pipeline stage."""
+    if LLM_PROVIDER == "mock" or LLM_ALL_STAGES:
+        return LLM_PROVIDER
+    return LLM_PROVIDER if stage in _GENERATIVE_STAGES else "mock"
+
+
 # --- Embeddings --------------------------------------------------------------
 EMBEDDINGS_BACKEND = _get("EMBEDDINGS_BACKEND", "tfidf")
 EMBEDDINGS_MODEL = _get("EMBEDDINGS_MODEL", "sentence-transformers/all-MiniLM-L6-v2")

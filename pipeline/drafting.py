@@ -79,7 +79,7 @@ def _build_section_pool(state: ProposalAgentState) -> list[EvidenceItem]:
 
 
 def run(state: ProposalAgentState, only_section: str | None = None) -> ProposalAgentState:
-    llm = get_llm()
+    llm = get_llm("draft_sections")
     rfp_data = state["rfp_data"]
     rfp_payload = {
         "client": rfp_data.client,

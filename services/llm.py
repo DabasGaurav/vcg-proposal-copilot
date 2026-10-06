@@ -253,5 +253,8 @@ def sentences(text: str) -> list[str]:
     return out
 
 
-def get_llm() -> LLM:
-    return LLM()
+def get_llm(stage: str | None = None) -> LLM:
+    """Return the LLM for a stage, honouring config.provider_for()."""
+    if stage is None:
+        return LLM()
+    return LLM(provider=config.provider_for(stage))

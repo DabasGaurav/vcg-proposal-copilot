@@ -43,7 +43,7 @@ def _to_requirement(raw: dict, rfp_text: str) -> RFPRequirement:
 
 
 def run(state: ProposalAgentState) -> ProposalAgentState:
-    llm = get_llm()
+    llm = get_llm("extract")
     rfp_text = state["rfp_raw_text"]
 
     attempt = 0

@@ -11,7 +11,7 @@ from state.graph_state import ProposalAgentState
 
 
 def run(state: ProposalAgentState, only_section: str | None = None) -> ProposalAgentState:
-    llm = get_llm()
+    llm = get_llm("claim_split")
     kept = [
         c for c in state.get("atomic_claims", [])
         if only_section and c.section_name != only_section

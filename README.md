@@ -42,20 +42,47 @@ pytest -q                            # run the current test suite
 streamlit run app.py                 # RFP → Requirements → Execution → Evidence → Draft → 🎯 Traceability → Review
 ```
 
-The default `LLM_PROVIDER=mock` is deterministic simulation for rehearsals and
-tests. To demonstrate real generation without sending documents off-device,
-install Ollama, download a local model once, then run:
+### API keys
+
+**There are none to replace.** Generation runs on a local Ollama model, so no
+key is required and no document leaves the machine. `.env.example` lists every
+setting; the only one that would need a credential is the optional hosted
+`LLM_PROVIDER=litellm` path, which is not used for the demonstration.
+
+### Running with the local model
 
 ```bash
-ollama pull gemma3
+ollama pull gemma3                 # one-time download, needs internet
+ollama serve                       # if not already running
 LLM_PROVIDER=ollama LLM_MODEL=gemma3:latest streamlit run app.py
 ```
 
-Ollama must be running locally. Model download needs internet once; inference
-afterward uses `127.0.0.1`. On a modest laptop, extraction may take a minute or
-more and quality varies with the document. Rehearse the exact RFP beforehand.
-The app's Execution tab records local model token counts and latency. No API
-charge is incurred for local inference; hardware and electricity still have costs.
+After the pull, inference talks only to `127.0.0.1:11434` — you can disconnect
+the network and the product still works.
+
+**Which stages use the model.** `config.provider_for()` routes per stage:
+
+| Stage | Handler | Why |
+|---|---|---|
+| Extract requirements, plan | Deterministic parser + source-span gate | A 4B local model produced requirements that retrieved no evidence at all (measured: fit 0%, 70 unresolvable citations). Structural parsing with a hallucination gate is both more reliable and faster here |
+| **Draft sections, decompose claims** | **Local Ollama model** | Generation is where a model genuinely earns its place |
+| Verify | Deterministic rules | Never a model. This is the product's whole thesis |
+
+Set `LLM_ALL_STAGES=true` to route every stage through the model and reproduce
+the measurement above.
+
+### Recording the presentation run
+
+A full local pass takes several minutes — too slow to perform live. Record it
+once, then reopen it instantly from the sidebar and perform one short live
+action on top:
+
+```bash
+LLM_PROVIDER=ollama LLM_MODEL=gemma3:latest python scripts/record_demo_run.py
+```
+
+The Execution tab reports measured tokens, latency, the local electricity cost
+and the hosted-API equivalent, with every rate shown as a stated assumption.
 
 Deterministic CLI demo (no API key, no network):
 
