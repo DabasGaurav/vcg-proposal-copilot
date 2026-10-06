@@ -63,7 +63,12 @@ OLLAMA_NUM_CTX = int(_get_float("OLLAMA_NUM_CTX", 8192))   # 4096 truncates draf
 # LLM_PROVIDER while the structural stages stay deterministic unless explicitly
 # overridden with LLM_ALL_STAGES=true.
 LLM_ALL_STAGES = _get_bool("LLM_ALL_STAGES", False)
-_GENERATIVE_STAGES = {"draft_sections", "claim_split"}
+# Drafting only. Claim decomposition was measured running through the model and
+# a small model given a bare JSON-array schema has no natural stopping point --
+# it burned the full 180s timeout per section while the deterministic splitter
+# does the same job instantly and reliably. Splitting prose into sentences is
+# mechanical; writing the prose is not.
+_GENERATIVE_STAGES = {"draft_sections"}
 
 
 def provider_for(stage: str) -> str:
