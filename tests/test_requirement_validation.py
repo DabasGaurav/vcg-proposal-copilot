@@ -76,3 +76,33 @@ def test_unreadable_document_refuses_to_draft(tmp_path):
     flat.write_text("Meridian Health seeks a partner. The work must finish soon.\n")
     with pytest.raises(ValueError, match="No requirements could be extracted"):
         run_pipeline(str(flat), persist=False)
+
+
+def test_wrapped_bullets_are_not_truncated():
+    """A tender bullet that wraps onto a second line must be read whole. The
+    one-line regex silently dropped "comparable lending engagement." from the
+    >30% criterion, corrupting the requirement, the retrieval query built from
+    it, and the instruction handed to the drafter."""
+    from services.llm import bullets
+
+    block = (
+        "- Evidence of greater than 30 percent turnaround-time improvement in a\n"
+        "  comparable lending engagement.\n"
+        "- A credible 12-week workplan that reaches a measured pilot.\n"
+    )
+    got = bullets(block)
+    assert got == [
+        "Evidence of greater than 30 percent turnaround-time improvement in a "
+        "comparable lending engagement.",
+        "A credible 12-week workplan that reaches a measured pilot.",
+    ]
+
+
+def test_every_extracted_requirement_is_a_complete_sentence():
+    st = _run_to_extraction("abc_bank_lending_transformation.md")
+    for req in st["rfp_data"].requirements:
+        if req.text.endswith((".", ":")):
+            continue
+        # a requirement must not end mid-phrase on a dangling article/preposition
+        assert req.text.split()[-1].lower() not in {"a", "an", "the", "in", "of", "for", "and"}, \
+            f"truncated requirement: {req.text!r}"

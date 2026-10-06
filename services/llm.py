@@ -49,7 +49,14 @@ def _call_stage(complete, stage: str, system: str, user: str) -> str:
     finally:
         _current_stage.reset(token)
 
-_BULLET = re.compile(r"^\s*[-*]\s+(.*\S)\s*$", re.M)
+# A bullet runs until the next bullet, a blank line, or a new heading -- NOT
+# until the end of the line. Matching one line truncated every wrapped bullet:
+# "Evidence of greater than 30 percent turnaround-time improvement in a"
+# silently lost "comparable lending engagement." Real tenders wrap constantly,
+# so this corrupted the requirement text, the retrieval query built from it, and
+# the instruction handed to the drafter.
+_BULLET = re.compile(r"^[ \t]*[-*][ \t]+(.+?)(?=\n[ \t]*[-*][ \t]|\n[ \t]*\n|\n#|\Z)",
+                     re.M | re.S)
 _H2 = re.compile(r"^##\s+(.*)$", re.M)
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 
@@ -202,7 +209,11 @@ def parse_sections(md: str) -> dict[str, str]:
 
 
 def bullets(block: str) -> list[str]:
-    return [b.strip() for b in _BULLET.findall(block)]
+    """Bullets from a block, with wrapped continuation lines rejoined."""
+    out = []
+    for raw in _BULLET.findall(block):
+        out.append(" ".join(raw.split()))      # collapse the wrap into one line
+    return [b for b in out if b]
 
 
 _LEADING_VERB = re.compile(

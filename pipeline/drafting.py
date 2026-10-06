@@ -23,6 +23,7 @@ def _evidence_payload(evs) -> list[dict]:
             "category": e.category.value,
             "chunk_text": e.chunk_text,
             "relevance_score": e.relevance_score,
+            "metadata": dict(e.metadata),
         }
         for e in evs
     ]

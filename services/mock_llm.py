@@ -25,7 +25,9 @@ from services.llm import (
     sentences,
     split_compound,
 )
+import config
 from services.text import (
+    context_window_tokens,
     extract_context_qualifiers,
     extract_named_entities,
     extract_numeric_tokens,
@@ -227,14 +229,32 @@ def _threshold_pct(text: str) -> float | None:
     return float(m.group(1)) if m else None
 
 
+_TAT_WORDS = ("turnaround", "tat", "approval time", "cycle time")
+
+
+def _figure_is_about(chunk: str, tok, words: tuple[str, ...]) -> bool:
+    """Is this number actually about `words`, or merely in the same passage?
+
+    The verifier answers this with a +/-20-token context window; the drafter used
+    to accept any qualifying percentage anywhere in a chunk that mentioned the
+    metric *somewhere*. CASE_BANK_001's results chunk reports an 18% turnaround
+    reduction AND a 30% handoff reduction, so the loose test concluded the firm
+    had ">30% turnaround" evidence. It does not. The drafter now applies the same
+    context rule the verifier does, so it cannot promise what verification will
+    then refuse.
+    """
+    window = context_window_tokens(chunk, tok.start, tok.end,
+                                   config.NUMERIC_CONTEXT_WINDOW).lower()
+    return any(w in window for w in words)
+
+
 def _evidence_supports_threshold(evidence: list[dict], pct: float) -> bool:
     for ev in evidence:
-        for tok in extract_numeric_tokens(ev["chunk_text"]):
-            if tok.canonical_unit() == "percent" and tok.value >= pct:
-                lowered = ev["chunk_text"].lower()
-                if any(k in lowered for k in ("turnaround", "tat", "approval time",
-                                              "cycle time")):
-                    return True
+        chunk = ev["chunk_text"]
+        for tok in extract_numeric_tokens(chunk):
+            if (tok.canonical_unit() == "percent" and tok.value >= pct
+                    and _figure_is_about(chunk, tok, _TAT_WORDS)):
+                return True
     return False
 
 
@@ -248,16 +268,88 @@ def _pool_by_source(pool: list[dict], source_id: str, keyword: str | None = None
     return matches[0] if matches else None
 
 
-def _pool_metric_case(pool: list[dict]) -> dict | None:
-    """A CASE_STUDY pool chunk that carries a turnaround/handoff percentage."""
+_NEGATED = ("no validated", "could not be", "was not", "not be substantiated",
+            "should not be cited", "no turnaround")
+
+
+def _metric_in_context(chunk: str, tok, words: tuple[str, ...]) -> bool:
+    """A figure belongs to a metric only if both sit on the same line, and only
+    if that line is not denying the result.
+
+    A +/-20-token window is right for *verification* (prose wraps), but too loose
+    for *selection* from a bulleted results list: the window around "22 percent"
+    reached into the next bullet and picked up "handoffs", so a 22% processing
+    -effort figure was drafted as a 22% handoff reduction. Results lists put one
+    metric per line, so the line is the correct unit here. CASE_BANK_002's "no
+    validated end-to-end turnaround-time reduction was recorded" is excluded by
+    the negation check -- the word is present, the result is not.
+    """
+    line_start = chunk.rfind("\n", 0, tok.start) + 1
+    line_end = chunk.find("\n", tok.end)
+    line = chunk[line_start: line_end if line_end != -1 else len(chunk)].lower()
+    if any(n in line for n in _NEGATED):
+        return False
+    return any(w in line for w in words)
+
+
+def _client_of(ev: dict) -> str:
+    """Describe the engagement from the cited passage itself, not from memory."""
+    meta = ev.get("metadata") or {}
+    region = str(meta.get("region", "")).strip()
+    sub = str(meta.get("subsector", "")).replace("_", " ").strip()
+    if sub and region:
+        return f"a {sub} engagement in {region}"
+    if region:
+        return f"an engagement in {region}"
+    return "a comparable engagement"
+
+
+def _case_metrics(pool: list[dict]) -> tuple[dict, dict] | None:
+    """Find the case-study passage that actually reports delivery figures, and
+    read those figures out of it.
+
+    Returns (evidence, {"turnaround": pct, "handoff": pct}) or None. The drafted
+    sentence is then built from the numbers in the cited passage, so the claim
+    and its citation cannot drift apart -- previously both were hard-coded, which
+    is how an Indian bank's 18%/30% ended up attributed to a Southeast Asian
+    engagement that recorded no turnaround result at all.
+    """
     for e in pool:
         if e.get("category") != "CASE_STUDY":
             continue
-        low = e["chunk_text"].lower()
-        has_pct = any(t.canonical_unit() == "percent"
-                      for t in extract_numeric_tokens(e["chunk_text"]))
-        if has_pct and any(k in low for k in ("turnaround", "handoff", "processing effort")):
-            return e
+        chunk = e["chunk_text"]
+        found: dict[str, float] = {}
+        for tok in extract_numeric_tokens(chunk):
+            if tok.canonical_unit() != "percent":
+                continue
+            if "turnaround" not in found and _metric_in_context(chunk, tok, _TAT_WORDS):
+                found["turnaround"] = tok.value
+            elif "handoff" not in found and _metric_in_context(chunk, tok, ("handoff",)):
+                found["handoff"] = tok.value
+        if "turnaround" in found:
+            return e, found
+    return None
+
+
+def _pool_metric_case(pool: list[dict]) -> dict | None:
+    """The CASE_STUDY chunk that actually reports a turnaround/handoff figure.
+
+    Previously this accepted any case-study chunk holding a percentage that also
+    mentioned the metric somewhere, and returned the first match. After a
+    retrieval change that first match became CASE_BANK_002 -- the engagement
+    whose own file states that no validated turnaround reduction was recorded --
+    so the drafter attributed another bank's figures to it. The figure must sit
+    in the metric's context window, exactly as the verifier requires.
+    """
+    for e in pool:
+        if e.get("category") != "CASE_STUDY":
+            continue
+        chunk = e["chunk_text"]
+        for tok in extract_numeric_tokens(chunk):
+            if (tok.canonical_unit() == "percent"
+                    and _figure_is_about(chunk, tok,
+                                         _TAT_WORDS + ("handoff", "processing effort"))):
+                return e
     return None
 
 
@@ -334,7 +426,8 @@ def draft_section(
             para.append("[EVIDENCE GAP: no team CVs selected as evidence]")
 
     elif section_title == "Relevant Experience & Credentials":
-        metric_case = _pool_metric_case(pool)
+        metrics = _case_metrics(pool)
+        metric_case = metrics[0] if metrics else None
         emitted_grounded = False
         for item in section_checklist:
             rid = f" [[req:{item['checklist_id']}]]"
@@ -356,11 +449,14 @@ def draft_section(
             ):
                 # grounded compound claim -> decomposed + each part verified vs
                 # the exact cited chunk.
+                ev_m, figures = metrics
+                parts = [f"reduced pilot approval turnaround time by "
+                         f"{figures['turnaround']:g} percent"]
+                if "handoff" in figures:
+                    parts.append(f"reduced manual handoffs by {figures['handoff']:g} percent")
                 para.append(
-                    "In a retail lending operations redesign for a large Indian "
-                    "bank, VCG reduced pilot approval turnaround time by 18 percent "
-                    "and reduced manual handoffs by 30 percent. "
-                    f"[[ev:{metric_case['evidence_id']}]]{rid}"
+                    f"In {_client_of(ev_m)}, VCG "
+                    + " and ".join(parts) + f". [[ev:{ev_m['evidence_id']}]]{rid}"
                 )
                 emitted_grounded = True
                 continue
