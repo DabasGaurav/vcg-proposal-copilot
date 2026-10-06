@@ -24,10 +24,13 @@ def test_snapshot_round_trip(tmp_path):
 
 def test_pipeline_run_writes_audit_trail(abc_state):
     # abc_state fixture runs with persist=False; run one persisted pipeline here
-    from pipeline.graph import run_pipeline
+    from pipeline.graph import continue_approved_pipeline, run_pipeline
+    from pipeline.qualification import record_decision
     import config
     st = run_pipeline(str(config.FIXTURE_DIR / "abc_bank_lending_transformation.md"),
                       run_id="persisted-1", persist=True)
+    record_decision(st, "BID", "fixture practice lead", "Test fixture")
+    st = continue_approved_pipeline(st)
     from services.persistence import get_store
     trail = get_store().audit_trail("persisted-1")
     stages = {e["stage"] for e in trail}
@@ -36,13 +39,15 @@ def test_pipeline_run_writes_audit_trail(abc_state):
 
 
 def test_run_can_be_resumed_with_full_working_state():
-    from pipeline.graph import load_run, run_pipeline
-    from pipeline import review, export
+    from pipeline.graph import continue_approved_pipeline, load_run, run_pipeline
+    from pipeline import review, export, qualification
     import config
     from models.schemas import ReviewDecision
 
     st = run_pipeline(str(config.FIXTURE_DIR / "abc_bank_lending_transformation.md"),
                       run_id="resume-1", persist=True)
+    qualification.record_decision(st, "BID", "practice lead", "Proceed to proposal")
+    st = continue_approved_pipeline(st)
     review.submit_section_decision(st, st["proposal_draft"].sections[0].section_id,
                                    "p", ReviewDecision.APPROVED, "ok")
 
@@ -56,6 +61,7 @@ def test_run_can_be_resumed_with_full_working_state():
         review.submit_section_decision(again, s.section_id, "p", ReviewDecision.APPROVED)
     for g in review.unresolved_gaps(again):
         review.override_gap(again, g.trace_id, "not claiming unsupported metric")
+    review.approve_price(again, "partner", "quote-001", "Commercial response checked")
     ok, _ = review.can_export(again)
     assert ok and "## Executive Summary" in export.render_markdown(again)
 

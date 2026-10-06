@@ -50,8 +50,33 @@ DB_PATH = Path(_get("DB_PATH", str(DATA_DIR / "proposal_copilot.sqlite")))
 CHROMA_PATH = Path(_get("CHROMA_PATH", str(ROOT / ".chroma")))
 
 # --- LLM ------------------------------------------------------------------
-LLM_PROVIDER = _get("LLM_PROVIDER", "mock")            # mock | litellm
-LLM_MODEL = _get("LLM_MODEL", "anthropic/claude-sonnet-5")
+LLM_PROVIDER = _get("LLM_PROVIDER", "mock")            # mock | ollama | litellm
+LLM_MODEL = _get("LLM_MODEL", "gemma3:latest" if LLM_PROVIDER == "ollama"
+                 else "anthropic/claude-sonnet-5")
+
+OLLAMA_NUM_CTX = int(_get_float("OLLAMA_NUM_CTX", 8192))   # 4096 truncates drafting prompts
+
+# Per-stage provider routing. Extraction and planning are structural work with a
+# source-span validation gate behind them; a small local model made them WORSE,
+# producing requirements that retrieved nothing. Generation is where a model
+# genuinely earns its place, so drafting and claim decomposition follow
+# LLM_PROVIDER while the structural stages stay deterministic unless explicitly
+# overridden with LLM_ALL_STAGES=true.
+LLM_ALL_STAGES = _get_bool("LLM_ALL_STAGES", False)
+# Drafting only. Claim decomposition was measured running through the model and
+# a small model given a bare JSON-array schema has no natural stopping point --
+# it burned the full 180s timeout per section while the deterministic splitter
+# does the same job instantly and reliably. Splitting prose into sentences is
+# mechanical; writing the prose is not.
+_GENERATIVE_STAGES = {"draft_sections"}
+
+
+def provider_for(stage: str) -> str:
+    """Which provider handles a given pipeline stage."""
+    if LLM_PROVIDER == "mock" or LLM_ALL_STAGES:
+        return LLM_PROVIDER
+    return LLM_PROVIDER if stage in _GENERATIVE_STAGES else "mock"
+
 
 # --- Embeddings --------------------------------------------------------------
 EMBEDDINGS_BACKEND = _get("EMBEDDINGS_BACKEND", "tfidf")
@@ -94,6 +119,16 @@ LEX_SUPPORTED = _get_float("LEX_SUPPORTED", 0.218)
 # numeric matcher tolerance (SPEC Section 15)
 NUMERIC_ABS_TOLERANCE = 0.5          # percentage points / absolute units
 NUMERIC_CONTEXT_WINDOW = 20          # +/- tokens around a number when checking consistency
+
+# --- Cost model (services/costing.py) -------------------------------------
+# ASSUMPTIONS, not measurements. Set from live pricing before quoting a figure;
+# costing.assumptions() surfaces every one of these next to the numbers.
+USD_INR = _get_float("USD_INR", 89.0)                    # exchange rate
+API_USD_PER_MTOK_INPUT = _get_float("API_USD_PER_MTOK_INPUT", 3.00)
+API_USD_PER_MTOK_OUTPUT = _get_float("API_USD_PER_MTOK_OUTPUT", 15.00)
+LOCAL_DEVICE_WATTS = _get_float("LOCAL_DEVICE_WATTS", 30.0)   # laptop draw while generating
+ELECTRICITY_INR_PER_KWH = _get_float("ELECTRICITY_INR_PER_KWH", 8.0)
+GPU_INR_PER_HOUR = _get_float("GPU_INR_PER_HOUR", 110.0)      # rented inference GPU
 
 # --- Export gating ------------------------------------------------------
 ALLOW_GAP_OVERRIDE = True            # unresolved GAPs block export unless explicitly overridden w/ reason

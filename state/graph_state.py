@@ -36,6 +36,12 @@ class ProposalAgentState(TypedDict, total=False):
     proposal_outline: list[str]
     procedural_checklist: list[str]
     human_input_requirements: list[str]
+    qualification: dict
+    practice_lead_decision: dict | None
+    price_approval: dict | None
+    model_usage: list[dict]
+    generation_provider: str
+    system_inputs: dict
 
     retrieval_queries: dict[str, list[str]]
     retrieved_evidence: dict[str, list[EvidenceItem]]
@@ -73,6 +79,12 @@ def new_state(**kwargs) -> ProposalAgentState:
         "proposal_outline": [],
         "procedural_checklist": [],
         "human_input_requirements": [],
+        "qualification": {},
+        "practice_lead_decision": None,
+        "price_approval": None,
+        "model_usage": [],
+        "generation_provider": "mock",
+        "system_inputs": {},
         "retrieval_queries": {},
         "retrieved_evidence": {},
         "selected_evidence": {},

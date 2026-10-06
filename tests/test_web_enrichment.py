@@ -27,9 +27,12 @@ def test_enabled_run_records_context_only(monkeypatch, tmp_path):
                         lambda q, k=4, provider=None: [
                             {"title": "Industry note", "snippet": "neutral background",
                              "url": "x", "provider": "mock"}])
-    from pipeline.graph import run_pipeline
+    from pipeline.graph import continue_approved_pipeline, run_pipeline
+    from pipeline.qualification import record_decision
     st = run_pipeline(str(config.FIXTURE_DIR / "abc_bank_lending_transformation.md"),
                       web_search=True, persist=False)
+    record_decision(st, "BID", "fixture practice lead", "Test fixture")
+    st = continue_approved_pipeline(st, persist=False)
     assert st["web_evidence"] and st["web_evidence"][0]["usage"] == "context_only"
     # web items never enter the citable evidence pool
     for k, evs in st["selected_evidence"].items():

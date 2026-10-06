@@ -70,7 +70,13 @@ Rules: quote MUST be copied verbatim from the RFP text (used for an anti-halluci
 check). Put NDA/reference/formatting/submission items in procedural_checklist AND as
 PROCEDURAL_ONLY requirements. If a mandatory requirement asks for a capability with no
 plausible consulting-firm coverage, mark it CAPABILITY_GAP. Never invent evaluation
-criteria that are not in the RFP -- add a warning instead."""
+criteria that are not in the RFP -- add a warning instead.
+Category and handling rules: work scope, deliverables, timelines, and proposed
+methodology are CONTENT and TEMPLATE_SATISFIABLE unless the RFP explicitly asks
+for proof of past firm experience. PROCEDURAL_ONLY means submission channel,
+signature, document format, annexure, or deadline. Past projects, certifications,
+and credentials are CONTENT or COMPLIANCE with NEEDS_EVIDENCE. Do not call a
+scope-of-work activity a procedural submission rule."""
 
 
 def extract_requirements(rfp_text: str, filename: str = "", *, complete=None) -> dict:

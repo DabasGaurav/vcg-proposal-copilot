@@ -16,9 +16,38 @@ asked "is this claim true".
 """
 from __future__ import annotations
 
+import json
 import re
+from contextvars import ContextVar
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 import config
+
+_usage_sink: ContextVar[list[dict] | None] = ContextVar("model_usage_sink", default=None)
+_current_stage: ContextVar[str] = ContextVar("model_stage", default="completion")
+
+
+def set_usage_sink(events: list[dict]):
+    return _usage_sink.set(events)
+
+
+def reset_usage_sink(token) -> None:
+    _usage_sink.reset(token)
+
+
+def _record_usage(event: dict) -> None:
+    sink = _usage_sink.get()
+    if sink is not None:
+        sink.append(event)
+
+
+def _call_stage(complete, stage: str, system: str, user: str) -> str:
+    token = _current_stage.set(stage)
+    try:
+        return complete(system, user)
+    finally:
+        _current_stage.reset(token)
 
 _BULLET = re.compile(r"^\s*[-*]\s+(.*\S)\s*$", re.M)
 _H2 = re.compile(r"^##\s+(.*)$", re.M)
@@ -46,14 +75,17 @@ class LLM:
             from services import mock_llm
             return mock_llm.extract_requirements(rfp_text, filename)
         from services import real_llm
-        return real_llm.extract_requirements(rfp_text, filename, complete=self.complete)
+        return real_llm.extract_requirements(
+            rfp_text, filename,
+            complete=lambda system, user: _call_stage(self.complete, "extract", system, user))
 
     def plan_response(self, rfp_data: dict) -> dict:
         if self.provider == "mock":
             from services import mock_llm
             return mock_llm.plan_response(rfp_data)
         from services import real_llm
-        return real_llm.plan_response(rfp_data, complete=self.complete)
+        return real_llm.plan_response(
+            rfp_data, complete=lambda system, user: _call_stage(self.complete, "plan", system, user))
 
     def draft_section(self, section_title: str, rfp_data: dict,
                       section_checklist: list[dict],
@@ -71,7 +103,8 @@ class LLM:
         return real_llm.draft_section(
             section_title, rfp_data, section_checklist, evidence_by_checklist,
             all_supported_evidence_ids=all_supported_evidence_ids,
-            section_evidence_pool=section_evidence_pool or [], complete=self.complete,
+            section_evidence_pool=section_evidence_pool or [],
+            complete=lambda system, user: _call_stage(self.complete, "draft", system, user),
         )
 
     def decompose_claims(self, section_title: str, section_markdown: str) -> list[dict]:
@@ -79,14 +112,55 @@ class LLM:
             from services import mock_llm
             return mock_llm.decompose_claims(section_title, section_markdown)
         from services import real_llm
-        return real_llm.decompose_claims(section_title, section_markdown, complete=self.complete)
+        return real_llm.decompose_claims(
+            section_title, section_markdown,
+            complete=lambda system, user: _call_stage(self.complete, "claim_split", system, user))
 
     # -- generic completion transport (real provider) ------------------
     def complete(self, system: str, user: str) -> str:
+        stage = _current_stage.get()
+        if self.provider == "ollama":
+            from services.ollama_schemas import BY_STAGE
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "stream": False,
+                # num_ctx: the Ollama default of 4096 silently truncates a
+                # drafting prompt that carries several evidence passages, which
+                # makes the model invent rather than cite. temperature 0 keeps a
+                # re-run reproducible.
+                "options": {"temperature": 0, "num_ctx": config.OLLAMA_NUM_CTX},
+            }
+            if stage in BY_STAGE:
+                payload["format"] = BY_STAGE[stage]
+            request = Request(
+                "http://127.0.0.1:11434/api/chat",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urlopen(request, timeout=180) as response:
+                    data = json.load(response)
+            except (URLError, TimeoutError) as exc:
+                raise RuntimeError(
+                    "Local Ollama is unavailable. Start Ollama and confirm "
+                    f"model {self.model!r} is installed: {exc}") from exc
+            _record_usage({
+                "stage": stage, "provider": "ollama", "model": self.model,
+                "input_tokens": data.get("prompt_eval_count"),
+                "output_tokens": data.get("eval_count"),
+                "reasoning_tokens": None,
+                "duration_seconds": round(data.get("total_duration", 0) / 1_000_000_000, 3),
+            })
+            return data.get("message", {}).get("content", "")
         if self.provider != "litellm":
             raise RuntimeError(
-                "LLM.complete() requires LLM_PROVIDER=litellm; the mock provider "
-                "uses the structured helpers instead."
+                "LLM.complete() requires LLM_PROVIDER=ollama or litellm; the "
+                "mock provider uses structured helpers instead."
             )
         try:
             import litellm
@@ -101,8 +175,15 @@ class LLM:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            temperature=0,
         )
+        usage = resp.get("usage") or {}
+        _record_usage({
+            "stage": stage, "provider": "litellm", "model": self.model,
+            "input_tokens": usage.get("prompt_tokens"),
+            "output_tokens": usage.get("completion_tokens"),
+            "reasoning_tokens": (usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
+            "duration_seconds": None,
+        })
         return resp["choices"][0]["message"]["content"]
 
 
@@ -172,5 +253,8 @@ def sentences(text: str) -> list[str]:
     return out
 
 
-def get_llm() -> LLM:
-    return LLM()
+def get_llm(stage: str | None = None) -> LLM:
+    """Return the LLM for a stage, honouring config.provider_for()."""
+    if stage is None:
+        return LLM()
+    return LLM(provider=config.provider_for(stage))

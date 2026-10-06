@@ -23,6 +23,7 @@ from pipeline import (
     extraction,
     intake,
     planning,
+    qualification,
     ranking,
     retrieval,
     traceability,
@@ -30,6 +31,7 @@ from pipeline import (
     web_enrichment,
 )
 from services.persistence import get_store
+from services.llm import reset_usage_sink, set_usage_sink
 from services.vectorstore import VectorStore
 from state.graph_state import ProposalAgentState, new_state
 
@@ -40,6 +42,7 @@ _STAGES = [
     ("plan_response", planning.run),
     ("retrieve_internal", None),          # needs the store, handled specially
     ("rank_evidence", ranking.run),
+    ("qualify", qualification.run),
     ("detect_conflicts", conflicts.run),
     ("optional_web_enrichment", web_enrichment.run),
     ("draft_sections", drafting.run),
@@ -62,13 +65,16 @@ def run_pipeline(
     db = get_store() if persist else None
 
     state = new_state(run_id=run_id, rfp_path=rfp_path, web_search_enabled=web_search)
+    state["generation_provider"] = config.LLM_PROVIDER
     state["_semantic_fn"] = store.semantic_similarity
 
     def _audit(stage: str, status: str, notes: str = "") -> None:
         if db:
             db.log(run_id, stage, status, notes=notes)
 
-    for name, fn in _STAGES:
+    usage_token = set_usage_sink(state["model_usage"])
+    try:
+      for name, fn in _STAGES:
         try:
             if name == "retrieve_internal":
                 state = retrieval.run(state, store=store)
@@ -80,15 +86,58 @@ def run_pipeline(
             _audit(name, "ok", str(last.get("detail", "")))
             if db:
                 db.save_snapshot(run_id, _snapshot(state))
+            if name == "qualify":
+                if db:
+                    save_run_state(state, db)
+                return state
         except Exception as exc:  # keep the run inspectable on failure
             state.setdefault("errors", []).append(f"{name}: {exc}")
             state["execution_log"].append({"stage": name, "status": "error", "detail": str(exc)})
             _audit(name, "error", str(exc))
             raise
+    finally:
+      reset_usage_sink(usage_token)
 
+    raise RuntimeError("Qualification stage was not reached")
+
+
+def continue_approved_pipeline(state: ProposalAgentState, *, persist: bool = True) -> ProposalAgentState:
+    """Resume after a recorded BID decision; never draft a NO_BID opportunity."""
+    decision = state.get("practice_lead_decision") or {}
+    if decision.get("decision") != "BID":
+        raise PermissionError("Practice lead must approve BID before drafting")
+    store = VectorStore.load()
+    state["_semantic_fn"] = store.semantic_similarity
+    db = get_store() if persist else None
+    after_gate = False
+    usage_token = set_usage_sink(state["model_usage"])
+    try:
+      for name, fn in _STAGES:
+        if name == "qualify":
+            after_gate = True
+            continue
+        if not after_gate:
+            continue
+        try:
+            if name == "deterministic_verify":
+                state = verification.run(state, semantic_fn=store.semantic_similarity)
+            else:
+                state = fn(state)
+            if db:
+                last = state["execution_log"][-1] if state["execution_log"] else {}
+                db.log(state["run_id"], name, "ok", notes=str(last.get("detail", "")))
+                db.save_snapshot(state["run_id"], _snapshot(state))
+        except Exception as exc:
+            state.setdefault("errors", []).append(f"{name}: {exc}")
+            state["execution_log"].append({"stage": name, "status": "error", "detail": str(exc)})
+            if db:
+                db.log(state["run_id"], name, "error", notes=str(exc))
+            raise
+    finally:
+      reset_usage_sink(usage_token)
     state["review_status"] = "PENDING"
-    _audit("await_human_review", "PENDING", "awaiting section-level approval")
     if db:
+        db.log(state["run_id"], "await_human_review", "PENDING", notes="awaiting section-level approval")
         save_run_state(state, db)
     return state
 
@@ -124,6 +173,8 @@ def _snapshot(state: ProposalAgentState) -> dict:
         "run_id", "rfp_filename", "warnings", "errors", "retrieval_gaps",
         "requirement_validation_errors", "review_status", "section_review_status",
         "execution_log", "procedural_checklist", "human_input_requirements",
+        "qualification", "practice_lead_decision", "price_approval", "model_usage",
+        "generation_provider",
     }
     out = {k: state.get(k) for k in keep}
     if state.get("proposal_draft") is not None:

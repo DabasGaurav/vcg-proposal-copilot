@@ -12,7 +12,7 @@ from state.graph_state import ProposalAgentState
 
 
 def run(state: ProposalAgentState) -> ProposalAgentState:
-    llm = get_llm()
+    llm = get_llm("plan")
     rfp_data = state["rfp_data"]
     raw = llm.plan_response(
         {

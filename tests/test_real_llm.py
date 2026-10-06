@@ -108,6 +108,10 @@ def test_full_pipeline_runs_on_stubbed_litellm(monkeypatch, tmp_path):
     rfp = tmp_path / "r.md"
     rfp.write_text(RFP)
     st = run_pipeline(str(rfp), persist=False)
+    from pipeline.graph import continue_approved_pipeline
+    from pipeline.qualification import record_decision
+    record_decision(st, "BID", "fixture practice lead", "Test fixture")
+    st = continue_approved_pipeline(st, persist=False)
     from models.schemas import VerificationStatus
     assert any(r.verification_status == VerificationStatus.GAP
                and "35 percent" in r.claim_text

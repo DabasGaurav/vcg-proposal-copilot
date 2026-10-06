@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from models.schemas import ReviewDecision
-from pipeline import export, review
+from pipeline import export, qualification, review
 
 
 def _approve_all(state):
@@ -21,6 +21,8 @@ def test_no_export_before_every_section_approved(abc_state):
 
 
 def test_gap_blocks_export_until_overridden_with_reason(abc_state):
+    qualification.record_decision(abc_state, "BID", "practice lead", "Pursue with review of gaps")
+    review.approve_price(abc_state, "partner", "rate-card-2026", "Commercial response approved")
     _approve_all(abc_state)
     ok, reasons = review.can_export(abc_state)
     assert not ok  # unresolved GAP rows remain
@@ -35,6 +37,17 @@ def test_gap_blocks_export_until_overridden_with_reason(abc_state):
 def test_override_requires_a_reason(abc_state):
     with pytest.raises(ValueError):
         review.override_gap(abc_state, "TRC-x", "")
+
+
+def test_commercial_signoff_is_separate_from_section_approval(abc_state):
+    qualification.record_decision(abc_state, "BID", "practice lead", "Pursue")
+    _approve_all(abc_state)
+    for row in review.unresolved_gaps(abc_state):
+        review.override_gap(abc_state, row.trace_id, "Withdraw unsupported claim")
+    ok, reasons = review.can_export(abc_state)
+    assert not ok and any("commercial response" in reason for reason in reasons)
+    review.approve_price(abc_state, "partner", "quote-001", "Price checked")
+    assert review.can_export(abc_state)[0]
 
 
 def test_human_edit_survives_regeneration_of_other_section(abc_state):

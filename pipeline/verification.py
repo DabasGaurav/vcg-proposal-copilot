@@ -9,6 +9,9 @@ nothing beyond that.
 """
 from __future__ import annotations
 
+import re
+from functools import lru_cache
+
 import config
 from models.schemas import (
     AtomicClaim,
@@ -24,8 +27,37 @@ from services.text import (
     significant_tokens,
 )
 
-# Authoritative attribution facts for the demo corpus (SPEC Section 9).
-KNOWN_PERSON_TENURE = {"ananya mehta": 18, "rohan sen": 12}
+# Authoritative attribution facts, derived from the firm's own CV documents
+# rather than hard-coded. A two-person lookup table silently passed every claim
+# about anyone else, so the attribution rule only worked on the demo corpus.
+_TENURE_SENTENCE = re.compile(
+    r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b[^.]{0,120}?\b(\d{1,2})\s+years?\b",
+    re.S,
+)
+
+
+@lru_cache(maxsize=1)
+def known_person_tenure() -> dict[str, int]:
+    """Map person -> stated years of experience, read from the TEAM_CV corpus.
+
+    Falls back to an empty map if the corpus cannot be loaded; an unknown person
+    is simply not checked, which is the documented default (attribution_valid
+    stays True unless a stated fact is contradicted).
+    """
+    facts: dict[str, int] = {}
+    try:
+        from services.corpus_loader import load_documents
+        docs = load_documents()
+    except Exception:
+        return facts
+    for doc in docs:
+        if str(doc.metadata.get("category", "")).upper() != "TEAM_CV":
+            continue
+        for name, years in _TENURE_SENTENCE.findall(doc.body):
+            key = name.strip().lower()
+            # first stated figure for a person wins; CVs lead with the summary
+            facts.setdefault(key, int(years))
+    return facts
 
 # tokens that don't count as topical agreement around a number -- units, generic
 # change verbs, and org/filler words that appear everywhere in the corpus.
@@ -85,7 +117,7 @@ def attribution_consistent(claim: AtomicClaim, evidence_text: str) -> bool:
         return True
     for entity in claim.named_entities:
         key = entity.strip().lower()
-        truth = KNOWN_PERSON_TENURE.get(key)
+        truth = known_person_tenure().get(key)
         if truth is None:
             continue
         if not any(numbers_match(y, truth, abs_tol=0.0) for y in claim_years):
@@ -196,10 +228,30 @@ def reason_string(claim: AtomicClaim, m: EvidenceMatch, status: VerificationStat
 # --------------------------------------------------------------------------- #
 def verify_claim(claim: AtomicClaim, evidence_index: dict, semantic_fn) -> dict:
     if not claim.requires_verification:
+        # A prospective statement needs no evidence -- but if it *cites* some, the
+        # citation still has to resolve. A generated draft that attributes a
+        # forward-looking sentence to a passage that was never selected is making
+        # a false provenance claim, and skipping the check here was a hole in the
+        # "every citation resolves to selected evidence" guarantee.
+        unresolved = [cid for cid in claim.cited_evidence_ids
+                      if evidence_index.get(cid) is None]
+        if unresolved:
+            return {
+                "status": VerificationStatus.FORWARD_LOOKING,
+                "match": None,
+                "confidence": 1.0,
+                "citation_valid": False,
+                "unresolved_citations": unresolved,
+                "reason": ("FORWARD_LOOKING: prospective statement, not a historical "
+                           "claim. CITATION REJECTED: " + ", ".join(unresolved) +
+                           " did not resolve to selected evidence and was stripped."),
+            }
         return {
             "status": VerificationStatus.FORWARD_LOOKING,
             "match": None,
             "confidence": 1.0,
+            "citation_valid": True,
+            "unresolved_citations": [],
             "reason": "FORWARD_LOOKING: prospective statement, not a historical claim.",
         }
 
@@ -253,6 +305,13 @@ def run(state, semantic_fn=None):
         results[claim.claim_id] = verify_claim(claim, index, semantic_fn)
 
     state["_verification_results"] = results  # consumed by traceability.py
+    broken = sorted({cid for r in results.values()
+                     for cid in (r.get("unresolved_citations") or [])})
+    if broken:
+        state.setdefault("warnings", []).append(
+            f"{len(broken)} citation(s) in the draft did not resolve to selected "
+            f"evidence and were rejected: " + ", ".join(broken[:6])
+        )
     counts: dict[str, int] = {}
     for r in results.values():
         counts[r["status"].value] = counts.get(r["status"].value, 0) + 1

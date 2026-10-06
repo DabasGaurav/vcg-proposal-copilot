@@ -201,10 +201,20 @@ def run(state: ProposalAgentState) -> ProposalAgentState:
     for req in state["rfp_data"].requirements:
         rows = [e for e in entries if e.requirement_id == req.requirement_id]
         statuses = [e.verification_status for e in rows]
+        verified_rows = [e for e in rows if e.claim_id != "(none)"]
+        # A requirement that produced an actual drafted claim rolls up to that
+        # claim's verdict. One that produced no claim is NOT "partially
+        # substantiated" -- it was never checked, and reporting it as PARTIAL
+        # conflated "we looked and it half-holds" with "we never looked".
         if VerificationStatus.SUPPORTED in statuses:
             roll = "SUPPORTED"
-        elif VerificationStatus.PARTIAL in statuses:
+        elif any(e.verification_status == VerificationStatus.PARTIAL
+                 for e in verified_rows):
             roll = "PARTIAL"
+        elif req.handling == RequirementHandling.TEMPLATE_SATISFIABLE:
+            roll = "NARRATIVE"
+        elif req.handling == RequirementHandling.NEEDS_HUMAN_INPUT:
+            roll = "HUMAN_INPUT"
         elif statuses:
             roll = statuses[0].value
         else:

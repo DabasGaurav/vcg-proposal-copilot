@@ -15,8 +15,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config  # noqa: E402
-from pipeline.graph import run_pipeline  # noqa: E402
-from pipeline import export  # noqa: E402
+from pipeline.graph import continue_approved_pipeline, run_pipeline  # noqa: E402
+from pipeline import export, qualification  # noqa: E402
 from pipeline.traceability import evidence_display_id  # noqa: E402
 from services.vectorstore import VectorStore  # noqa: E402
 
@@ -38,6 +38,9 @@ def main() -> int:
 
     print(f"\n=== RUN: {fixture} ===\n")
     state = run_pipeline(str(path), web_search=False)
+    qualification.record_decision(state, "BID", "demo practice lead",
+                                  "Prepared demonstration fixture")
+    state = continue_approved_pipeline(state)
 
     print("--- Execution log ---")
     for step in state["execution_log"]:

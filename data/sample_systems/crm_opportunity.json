@@ -1,0 +1,9 @@
+{
+  "source": "fictional_sample_crm",
+  "opportunity_id": "CRM-ABC-001",
+  "client": "ABC Bank",
+  "practice": "Financial Services",
+  "sector": "Retail banking",
+  "status": "RFP received",
+  "owner": "Ananya Mehta"
+}

@@ -48,12 +48,25 @@ STATUS: dict[str, dict[str, str]] = {
         "fill": "#3987e5", "ink": "#5598e7", "tint": "rgba(57,135,229,.15)",
         "icon": "●", "label": "Forward-looking",
     },
+    "NARRATIVE": {
+        "fill": "#5598e7", "ink": "#7fb0ec", "tint": "rgba(85,152,231,.13)",
+        "icon": "●", "label": "Answered in narrative",
+    },
+    "HUMAN_INPUT": {
+        "fill": "#898781", "ink": "#c3c2b7", "tint": "rgba(137,135,129,.15)",
+        "icon": "●", "label": "Awaiting human input",
+    },
     "NO_ROW": {
         "fill": "#898781", "ink": "#c3c2b7", "tint": "rgba(137,135,129,.15)",
         "icon": "●", "label": "Not addressed",
     },
 }
-STATUS_ORDER = ["SUPPORTED", "PARTIAL", "GAP", "FORWARD_LOOKING", "NO_ROW"]
+# Ordered best to worst for the stacked coverage bar. NARRATIVE and HUMAN_INPUT
+# are deliberately distinct from PARTIAL: a requirement answered in prose, or
+# waiting on a partner, was never *verified* and must not be reported as though
+# the evidence half-supported it.
+STATUS_ORDER = ["SUPPORTED", "PARTIAL", "NARRATIVE", "HUMAN_INPUT", "GAP",
+                "FORWARD_LOOKING", "NO_ROW"]
 
 
 def status_fill(key: str) -> str:
