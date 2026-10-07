@@ -63,7 +63,32 @@ _BULLET = re.compile(
     rf"^[ \t]*{_MARKER}[ \t]+(.+?)(?=\n[ \t]*{_MARKER}[ \t]|\n[ \t]*\n|\n#|\Z)",
     re.M | re.S)
 _H2 = re.compile(r"^##\s+(.*)$", re.M)
-_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+# A sentence boundary is a full stop, then whitespace, then a capital -- but a
+# drafted sentence ends with its citation tag, so the tag sat between the stop
+# and the capital and the boundary was never recognised. Three sentences became
+# one 402-character "atomic" claim, and verifying any part of it stamped the
+# whole blob SUPPORTED: a run had Ananya Mehta's CV substantiating "a key team
+# member has previously led retail lending operations redesign for a large
+# Indian bank", which that CV does not say. The tags belong to the sentence they
+# follow, so the boundary is placed after them.
+_TAG_RUN = r"(?:\s*\[\[[^\]]*\]\])*"
+_SENT_SPLIT = re.compile(rf"(?<=[.!?])(?P<tags>{_TAG_RUN})\s+(?=[\"\'(\[]?[A-Z])")
+
+
+def split_sentences(chunk: str) -> list[str]:
+    """Split on sentence boundaries, keeping each sentence's citation tags."""
+    out: list[str] = []
+    last = 0
+    for m in _SENT_SPLIT.finditer(chunk):
+        cut = m.start() + len(m.group("tags"))
+        piece = chunk[last:cut].strip()
+        if piece:
+            out.append(piece)
+        last = m.end()
+    tail = chunk[last:].strip()
+    if tail:
+        out.append(tail)
+    return out
 
 PROSPECTIVE_MARKERS = (
     "we propose", "we will", "the team will", "in weeks", "during weeks",
@@ -265,7 +290,7 @@ def sentences(text: str) -> list[str]:
         chunk = chunk.strip().lstrip("-*").strip()
         if not chunk:
             continue
-        out.extend(s.strip() for s in _SENT_SPLIT.split(chunk) if s.strip())
+        out.extend(split_sentences(chunk))
     return out
 
 

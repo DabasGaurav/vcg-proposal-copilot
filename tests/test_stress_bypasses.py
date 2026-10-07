@@ -164,3 +164,78 @@ def test_a_document_marked_none_is_not_flagged():
     state = {"selected_evidence": {"CHK-001": [fine]}, "errors": [],
              "warnings": [], "execution_log": []}
     assert conflicts.run(state)["evidence_conflicts"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Found by auditing a recorded run's SUPPORTED claims against their sources.
+# A drafted sentence ends with its citation tag, which sat between the full stop
+# and the next capital, so the sentence boundary was never recognised: three
+# sentences became one 402-character "atomic" claim and verifying any part of it
+# stamped the whole blob SUPPORTED.
+# --------------------------------------------------------------------------- #
+CITED_BLOCK = (
+    "VCG's team brings significant experience in redesigning retail lending "
+    "operations for Indian banks. [[ev:CHK-014::CV_001::00.00]] Ananya Mehta, "
+    "Partner at VCG, possesses 18 years of experience in banking and lending "
+    "operations. [[ev:CHK-014::CASE_BANK_001::00.00]] Furthermore, a key team "
+    "member has previously led retail lending operations redesign for a large "
+    "Indian bank. [[ev:CHK-014::CASE_BANK_001::02.00]]"
+)
+
+
+def test_a_citation_tag_does_not_hide_a_sentence_boundary():
+    from services.llm import sentences
+
+    assert len(sentences(CITED_BLOCK)) == 3
+
+
+def test_each_sentence_keeps_its_own_citation():
+    claims = decompose_claims("Team & Credentials", CITED_BLOCK)
+    assert len(claims) == 3, [c["claim_text"] for c in claims]
+    assert [c["cited_evidence_ids"] for c in claims] == [
+        ["CHK-014::CV_001::00.00"],
+        ["CHK-014::CASE_BANK_001::00.00"],
+        ["CHK-014::CASE_BANK_001::02.00"],
+    ]
+    assert all(len(c["claim_text"]) < 200 for c in claims)
+
+
+def test_plain_prose_still_splits_and_a_decimal_does_not():
+    from services.llm import sentences
+
+    assert len(sentences("We did one thing. Then we did another.")) == 2
+    assert len(sentences("Turnaround fell 18.2 percent against baseline.")) == 1
+
+
+# --------------------------------------------------------------------------- #
+# The headline substantiation figures counted traceability ENTRIES, not claims,
+# so a claim linked to two requirements was counted twice.
+# --------------------------------------------------------------------------- #
+def test_substantiation_counts_distinct_claims_not_trace_entries():
+    from pipeline.graph import continue_approved_pipeline, run_pipeline
+    from pipeline.qualification import record_decision
+
+    config.ensure_dirs()
+    VectorStore.ensure_seeded()
+    state = run_pipeline(
+        str(config.FIXTURE_DIR / "abc_bank_lending_transformation.md"),
+        run_id="test-counts", persist=False,
+    )
+    record_decision(state, "BID", "test", "count regression")
+    state = continue_approved_pipeline(state, persist=False)
+
+    draft = state["proposal_draft"]
+    results = state["_verification_results"]
+    linked = {e.claim_id for e in draft.overall_traceability if e.claim_id != "(none)"}
+
+    def claims_with(status: str) -> int:
+        return len({cid for cid in linked
+                    if results[cid]["status"].value == status})
+
+    assert draft.supported_claim_count == claims_with("SUPPORTED")
+    assert draft.partial_claim_count == claims_with("PARTIAL")
+    assert draft.gap_claim_count == claims_with("GAP")
+
+    # and a claim linked twice must not inflate the count
+    entries = [e for e in draft.overall_traceability if e.claim_id != "(none)"]
+    assert len(entries) >= len({e.claim_id for e in entries})

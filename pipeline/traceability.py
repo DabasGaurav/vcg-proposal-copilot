@@ -182,7 +182,12 @@ def run(state: ProposalAgentState) -> ProposalAgentState:
         ))
 
     def _count(st):
-        return sum(1 for e in entries if e.verification_status == st and e.claim_id != "(none)")
+        # DISTINCT claims. These counters are named *_claim_count and are the
+        # headline substantiation figures on the dashboard, but they counted
+        # traceability ENTRIES: a claim linked to two requirements was counted
+        # twice, so 6 substantiated claims were reported as 9.
+        return len({e.claim_id for e in entries
+                    if e.verification_status == st and e.claim_id != "(none)"})
 
     draft = ProposalDraft(
         proposal_id=f"PROP-{state['run_id'][:8]}",
