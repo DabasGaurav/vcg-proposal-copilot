@@ -320,3 +320,48 @@ def test_a_contradiction_in_any_cited_passage_is_a_gap():
     result = verify_claim(both, {"CV::00": clean, "CASE::00": contradicting}, sem)
     assert result["status"] == VerificationStatus.GAP
     assert "CONTRADICTED" in result["reason"]
+
+
+# --------------------------------------------------------------------------- #
+# Checking every cited passage and then taking the best status made Rule E
+# overridable by which passage scored highest. "mirroring successful engagements
+# for other Indian banks", citing one Indian engagement and one Southeast Asian
+# one, was SUPPORTED by the Indian passage while the other flagged the geography
+# mismatch that makes the plural false. A disqualifying finding against ANY cited
+# passage applies.
+# --------------------------------------------------------------------------- #
+def test_a_geography_mismatch_in_any_cited_passage_blocks_supported():
+    india = EvidenceItem(
+        evidence_id="IN::00", source_id="CASE_IN", chunk_id="IN::00", title="CASE_IN",
+        chunk_text="A large Indian retail bank engaged VCG to redesign its consumer "
+                   "lending operations across personal loans and two-wheeler finance.",
+        category="CASE_STUDY", metadata={"region": "India", "industry": "banking"},
+        source_path="data/corpus/CASE_IN.md", relevance_score=0.9, selected=True,
+    )
+    sea = EvidenceItem(
+        evidence_id="SEA::00", source_id="CASE_SEA", chunk_id="SEA::00", title="CASE_SEA",
+        chunk_text="A mid-size Southeast Asian bank asked VCG to improve its small and "
+                   "medium enterprise lending process.",
+        category="CASE_STUDY",
+        metadata={"region": "Southeast Asia", "industry": "banking"},
+        source_path="data/corpus/CASE_SEA.md", relevance_score=0.8, selected=True,
+    )
+    sem = VectorStore.load().semantic_similarity
+    sentence = ("VCG's approach to redesigning consumer lending operations centers on a "
+                "time-boxed pilot, mirroring successful engagements for other Indian banks.")
+
+    # the Indian passage alone supports it
+    alone = _claim(sentence, "IN::00")
+    assert verify_claim(alone, {"IN::00": india}, sem)["status"] == \
+        VerificationStatus.SUPPORTED
+
+    # citing the Southeast Asian engagement as one of those "Indian banks" must not
+    # be rescued by the Indian passage scoring better
+    raw = decompose_claims("Approach",
+                           f"{sentence} [[ev:IN::00]] [[ev:SEA::00]]")
+    assert len(raw) == 1
+    both = AtomicClaim(**raw[0])
+    assert both.cited_evidence_ids == ["IN::00", "SEA::00"]
+    result = verify_claim(both, {"IN::00": india, "SEA::00": sea}, sem)
+    assert result["status"] == VerificationStatus.PARTIAL
+    assert "geography" in result["reason"]

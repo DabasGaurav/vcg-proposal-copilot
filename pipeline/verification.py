@@ -349,8 +349,15 @@ def verify_claim(claim: AtomicClaim, evidence_index: dict, semantic_fn) -> dict:
     # EVERY cited passage is checked, not just the first that resolves. A claim
     # citing three sources was verified against one of them, so a contradiction
     # in the second or third was never seen -- and Rule C is meant to be
-    # unoverridable. A numeric contradiction against any cited passage is a gap;
-    # otherwise the claim takes the best status it genuinely achieves.
+    # unoverridable.
+    #
+    # The claim takes the best status it genuinely achieves, but a disqualifying
+    # finding against ANY cited passage still applies. Taking the best status
+    # alone made Rules C and E overridable by which passage happened to score
+    # highest: "mirroring successful engagements for other Indian banks", citing
+    # one Indian engagement and one Southeast Asian one, was SUPPORTED by the
+    # Indian passage while the other flagged the geography mismatch that makes
+    # the plural false.
     resolved_all = [ev for ev in (evidence_index.get(cid)
                                   for cid in claim.cited_evidence_ids)
                     if ev is not None]
@@ -370,6 +377,16 @@ def verify_claim(claim: AtomicClaim, evidence_index: dict, semantic_fn) -> dict:
             rank = {VerificationStatus.SUPPORTED: 3, VerificationStatus.PARTIAL: 2,
                     VerificationStatus.GAP: 1, VerificationStatus.FORWARD_LOOKING: 0}
             status, match = max(scored, key=lambda p: (rank[p[0]], confidence(p[1])))
+            # Rule E and the conflict rule apply across every cited passage.
+            mismatched = next((m for _, m in scored if m.context_mismatch), None)
+            if mismatched is not None and status == VerificationStatus.SUPPORTED:
+                status, match = VerificationStatus.PARTIAL, mismatched
+                match.notes.append(
+                    "downgraded from SUPPORTED: a cited passage contradicts the "
+                    "claim's geography/industry qualifier")
+            conflicted = next((m for _, m in scored if m.conflict_flag), None)
+            if conflicted is not None and status == VerificationStatus.SUPPORTED:
+                status, match = VerificationStatus.PARTIAL, conflicted
 
     # a conflicting claim can never auto-resolve to SUPPORTED (SPEC Section 11)
     if match and match.conflict_flag and status == VerificationStatus.SUPPORTED:
