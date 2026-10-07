@@ -258,6 +258,26 @@ def _evidence_supports_threshold(evidence: list[dict], pct: float) -> bool:
     return False
 
 
+_TRAILING_CLAUSE = re.compile(
+    r"\s+(?:in|for|on|across)\s+an?\s+[^.]*?(?:engagement|project|assignment|client)\b.*$",
+    re.I,
+)
+
+
+def _threshold_metric(requirement: str, pct: float) -> str:
+    """The metric the tender attaches its threshold to, in the tender's words.
+
+    "greater than 30 percent turnaround-time improvement in a comparable lending
+    engagement" -> "turnaround-time improvement".
+    """
+    m = re.search(rf"{pct:g}\s*(?:percent|%)\s*(.*)$", requirement, re.I | re.S)
+    if not m:
+        return "improvement"
+    tail = " ".join(m.group(1).split()).rstrip(".")
+    tail = _TRAILING_CLAUSE.sub("", tail).strip(" ,.")
+    return tail or "improvement"
+
+
 def _pool_by_source(pool: list[dict], source_id: str, keyword: str | None = None) -> dict | None:
     matches = [e for e in pool if e["source_id"] == source_id]
     if keyword:
@@ -353,6 +373,89 @@ def _pool_metric_case(pool: list[dict]) -> dict | None:
     return None
 
 
+# --------------------------------------------------------------------------- #
+# Evidence readers -- every drafted sentence below is built from text actually
+# present in a cited passage. Where no passage supports a section, the drafter
+# emits an EVIDENCE GAP rather than falling back on prose about an industry the
+# tender may have nothing to do with.
+# --------------------------------------------------------------------------- #
+_CV_RE = re.compile(
+    r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s+is\s+an?\s+([A-Za-z ]+?)\s+at\s+\w+\s+"
+    r"with\s+(\d{1,2})\s+years?\s+of\s+experience[,\s]*(?:in\s+|focused\s+on\s+)?([^.]*)",
+    re.S,
+)
+_PHASE_RE = re.compile(r"Phase\s+\d\s*[-–—]\s*([A-Za-z]+)", re.I)
+_PHASE_LIST_RE = re.compile(r"\(([A-Za-z]+(?:/[A-Za-z]+){2,})\)")
+_RISK_RE = re.compile(r"delivery risks?:\s*([^.]+)", re.I)
+_WEEKS_RE = re.compile(r"(\d{1,2})[-\s]week|within\s+(\d{1,2})\s+weeks?", re.I)
+
+
+def _cv_people(pool: list[dict]) -> list[tuple[dict, str, str, str, str]]:
+    """(evidence, name, role, years, focus) for each CV passage that states them."""
+    out, seen = [], set()
+    for e in pool:
+        if e.get("category") != "TEAM_CV":
+            continue
+        m = _CV_RE.search(e["chunk_text"])
+        if not m:
+            continue
+        name, role, years, focus = (g.strip() for g in m.groups())
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append((e, name, role, years, " ".join(focus.split())))
+    return out
+
+
+def _method_phases(pool: list[dict]) -> tuple[dict, list[str]] | None:
+    """(evidence, phase names) for the methodology the pool actually contains.
+
+    Each phase is its own chunk, so the names are collected across every
+    methodology passage from the same document and the passage cited is the one
+    that names the methodology as a whole.
+    """
+    by_doc: dict[str, list[str]] = {}
+    first: dict[str, dict] = {}
+    for e in pool:
+        if e.get("category") != "METHODOLOGY":
+            continue
+        doc = e["source_id"]
+        text = e["chunk_text"] + " " + str((e.get("metadata") or {}).get("heading_path", ""))
+        names = _PHASE_RE.findall(text)
+        if not names:
+            slash = _PHASE_LIST_RE.search(text)
+            names = slash.group(1).split("/") if slash else []
+        if names:
+            first.setdefault(doc, e)
+            for n in names:
+                n = n.strip().title()
+                if n and n not in by_doc.setdefault(doc, []):
+                    by_doc[doc].append(n)
+    for doc, names in by_doc.items():
+        if len(names) >= 2:
+            return first[doc], names
+    return None
+
+
+def _named_risks(pool: list[dict]) -> tuple[dict, list[str]] | None:
+    """(evidence, risks) from a passage that actually enumerates delivery risks."""
+    for e in pool:
+        m = _RISK_RE.search(e["chunk_text"])
+        if not m:
+            continue
+        raw = m.group(1).replace(" and ", ", ")
+        risks = [" ".join(r.split()) for r in raw.split(",") if len(r.strip()) > 8]
+        if len(risks) >= 2:
+            return e, risks
+    return None
+
+
+def _timeline_weeks(rfp_data: dict) -> str | None:
+    """The engagement length the TENDER states -- never a number of our own."""
+    m = _WEEKS_RE.search(rfp_data.get("timeline") or "")
+    return (m.group(1) or m.group(2)) if m else None
+
+
 def draft_section(
     section_title: str,
     rfp_data: dict,
@@ -381,22 +484,36 @@ def draft_section(
         )
 
     elif section_title == "Proposed Approach & Workplan":
-        para.append(
-            "We propose a phased engagement structured as Diagnose, Design, Pilot, "
-            "and Scale, reaching a measured pilot within the stated timeline. [[ev:METHOD_001]]"
-        )
-        para.append(
-            "During weeks 1 to 3 the team will map the end-to-end process, quantify "
-            "delay at each step, and establish a matched baseline."
-        )
-        para.append(
-            "In weeks 4 to 7 we will redesign the workflow and operating model; in "
-            "weeks 8 to 11 we will run the controlled pilot; in week 12 we will "
-            "produce a scale recommendation."
-        )
-        for item in section_checklist:
-            if item["handling"] in ("NEEDS_EVIDENCE", "TEMPLATE_SATISFIABLE"):
-                continue
+        found = _method_phases(pool)
+        weeks = _timeline_weeks(rfp_data)
+        if found:
+            ev_m, phases = found
+            horizon = (f" within the {weeks}-week timeline stated in the RFP"
+                       if weeks else " within the timeline stated in the RFP")
+            # Only enumerate the phases when enough of the methodology was
+            # actually retrieved. Selection returned two of four phases on one
+            # run, and naming just those implied the method was "Pilot and
+            # Scale" -- a claim the cited passage does not make.
+            if len(phases) >= 3:
+                named = ", ".join(phases[:-1]) + " and " + phases[-1]
+                para.append(
+                    f"We propose a phased engagement following our documented "
+                    f"methodology: {named}{horizon}. [[ev:{ev_m['evidence_id']}]]"
+                )
+            else:
+                para.append(
+                    f"We propose a phased engagement following our documented "
+                    f"methodology, reaching a measured pilot{horizon}. "
+                    f"[[ev:{ev_m['evidence_id']}]]"
+                )
+            para.append(
+                "Improvement is measured against a baseline captured before any "
+                "redesign is proposed, so the result claimed at the end of the "
+                "engagement is one the client can audit."
+            )
+        else:
+            para.append("[EVIDENCE GAP: no methodology passage was selected, so no "
+                        "phased workplan can be proposed from the firm's own record]")
 
     elif section_title == "Team & Credentials":
         if any(i["handling"] == "NEEDS_HUMAN_INPUT" for i in section_checklist):
@@ -410,20 +527,16 @@ def draft_section(
             if "team" in it["requirement_text"].lower() or "named" in it["requirement_text"].lower():
                 team_rid = f" [[req:{it['checklist_id']}]]"
                 break
-        cv1 = _pool_by_source(pool, "CV_001", keyword="18 years")
-        cv2 = _pool_by_source(pool, "CV_002", keyword="12 years")
-        if cv1:
+        people = _cv_people(pool)
+        for ev_cv, name, role, years, focus in people:
+            focus_txt = f" in {focus}" if focus else ""
             para.append(
-                "Ananya Mehta, Partner, has 18 years of experience in banking and "
-                f"lending operations. [[ev:{cv1['evidence_id']}]]{team_rid}"
+                f"{name}, {role}, has {years} years of experience{focus_txt}. "
+                f"[[ev:{ev_cv['evidence_id']}]]{team_rid}"
             )
-        if cv2:
-            para.append(
-                "Rohan Sen, Principal, has 12 years of experience in SME lending "
-                f"and underwriting. [[ev:{cv2['evidence_id']}]]{team_rid}"
-            )
-        if not (cv1 or cv2):
-            para.append("[EVIDENCE GAP: no team CVs selected as evidence]")
+        if not people:
+            para.append("[EVIDENCE GAP: no team CV was selected, so no named "
+                        "individual can be put forward from the firm's own record]")
 
     elif section_title == "Relevant Experience & Credentials":
         metrics = _case_metrics(pool)
@@ -435,11 +548,19 @@ def draft_section(
             pool_ev = ev + [e for e in pool if e["source_id"] in {x["source_id"] for x in ev}]
             pct = _threshold_pct(item["requirement_text"])
             if pct is not None and not _evidence_supports_threshold(pool_ev, pct):
-                # PLANTED OVERCLAIM -- no citation, corpus cannot support >30% TAT.
-                # This is the hero GAP row (SPEC Section 1).
+                # The tender demands a threshold the evidence base cannot meet.
+                # This reproduces what a drafter under pressure to answer every
+                # evaluation criterion actually does -- it asserts a figure that
+                # clears the bar, with nothing behind it. The claim is built from
+                # the tender's OWN metric and threshold rather than a fixed
+                # sentence, so it stays plausible for whatever is being bid on,
+                # and it carries no citation. Verification rejects it as an
+                # orphan claim. In LLM_PROVIDER=ollama the live model produces
+                # this class of claim unprompted.
+                metric = _threshold_metric(item["requirement_text"], pct)
                 para.append(
-                    "In a comparable lending engagement, VCG reduced lending "
-                    f"turnaround time by 35 percent.{rid}"
+                    f"In a comparable engagement, VCG delivered a "
+                    f"{pct + 5:g} percent {metric}.{rid}"
                 )
                 continue
             if metric_case is not None and not emitted_grounded and (
@@ -470,15 +591,22 @@ def draft_section(
                 para.append(f"[EVIDENCE GAP: {item['evidence_need']}]")
 
     elif section_title == "Risks & Mitigations":
-        para.append(
-            "We propose to manage three delivery risks: data availability for "
-            "baselining, branch change fatigue during the pilot, and credit-risk "
-            "appetite for auto-decisioning."
-        )
-        para.append(
-            "For each, mitigations are agreed with the client at mobilisation and "
-            "tracked weekly."
-        )
+        found = _named_risks(pool)
+        if found:
+            ev_r, risks = found
+            listed = ", ".join(risks[:-1]) + " and " + risks[-1]
+            para.append(
+                f"We propose to manage the delivery risks our own engagement record "
+                f"identifies on work of this kind: {listed}. [[ev:{ev_r['evidence_id']}]]"
+            )
+            para.append(
+                "For each, mitigations are agreed with the client at mobilisation "
+                "and tracked weekly."
+            )
+        else:
+            para.append("[EVIDENCE GAP: no past-engagement passage naming delivery "
+                        "risks was selected, so the risk register must be written by "
+                        "the engagement team]")
 
     elif section_title == "Commercial":
         para.append(
@@ -489,19 +617,25 @@ def draft_section(
 
     elif section_title == "Executive Summary":
         para.append(
-            f"{client} has asked for a partner to deliver the transformation "
-            "described in the RFP within the stated timeline."
+            f"{client.rstrip('.')} has asked for a partner to deliver the "
+            "transformation described in the RFP within the stated timeline."
         )
         para.append(
             "We propose a phased approach that reaches a measured pilot within the "
             "timeline, staffed by an experienced team."
         )
-        case = _pool_by_source(pool, "CASE_BANK_001") or _pool_metric_case(pool)
-        if case:
+        metrics = _case_metrics(pool)
+        if metrics:
+            ev_c, figures = metrics
             para.append(
-                "VCG has delivered comparable retail lending redesigns, including a "
-                f"measured branch pilot for a large Indian bank. [[ev:{case['evidence_id']}]]"
+                f"VCG has delivered comparable work, including {_client_of(ev_c)} in "
+                f"which pilot approval turnaround time fell by "
+                f"{figures['turnaround']:g} percent against a matched baseline. "
+                f"[[ev:{ev_c['evidence_id']}]]"
             )
+        else:
+            para.append("[EVIDENCE GAP: no comparable engagement with a measured "
+                        "result was selected]")
 
     body = "\n\n".join(p if p.endswith((".", ":", "]")) else p + "." for p in para if p)
     return body or "[EVIDENCE GAP: no content generated for this section]"

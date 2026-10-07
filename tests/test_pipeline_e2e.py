@@ -46,3 +46,50 @@ def test_demo_script_exits_zero():
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
     assert "18% claim SUPPORTED : PASS" in r.stdout
     assert "35% claim caught GAP: PASS" in r.stdout
+
+
+def test_out_of_domain_tender_gets_no_banking_prose(tmp_path):
+    """The drafter must not assert lending content on a tender from another
+    sector. It previously emitted "branch change fatigue", a lending methodology
+    and "VCG reduced lending turnaround time by 35 percent" on a hospital RFP,
+    because those sentences were hard-coded."""
+    rfp = tmp_path / "hospital.md"
+    rfp.write_text(
+        "# RFP — Hospital Revenue Cycle\n\n## Client\nMeridian Health, a hospital network.\n\n"
+        "## Background\nLong payer settlement cycles.\n\n"
+        "## Timeline\nThe engagement must be completed in 14 weeks.\n\n"
+        "## Scope of Work\n- Diagnose the revenue cycle end to end.\n\n"
+        "## Evaluation Criteria\n"
+        "- Demonstrated experience transforming hospital revenue cycle operations.\n"
+        "- Evidence of greater than 25 percent reduction in days-sales-outstanding.\n\n"
+        "## Procedural Requirements\n- Proposals must be submitted in English.\n"
+    )
+    st = approved_run(rfp)
+    draft = " ".join(st["draft_sections"].values()).lower()
+    for leaked in ("branch change fatigue", "credit-risk appetite", "auto-decisioning",
+                   "lending turnaround", "ananya", "rohan", "retail lending redesign"):
+        assert leaked not in draft, f"banking prose leaked onto a hospital tender: {leaked!r}"
+
+
+def test_unsupported_threshold_claim_uses_the_tender_s_own_metric(tmp_path):
+    """When the tender demands a threshold the evidence cannot meet, the
+    resulting unsupported claim must be about the metric the tender asked for --
+    and must still be caught."""
+    from models.schemas import VerificationStatus
+
+    rfp = tmp_path / "hospital.md"
+    rfp.write_text(
+        "# RFP\n\n## Client\nMeridian Health.\n\n## Background\nSlow settlement.\n\n"
+        "## Timeline\nCompleted in 14 weeks.\n\n## Scope of Work\n- Diagnose the cycle.\n\n"
+        "## Evaluation Criteria\n"
+        "- Evidence of greater than 25 percent reduction in days-sales-outstanding.\n\n"
+        "## Procedural Requirements\n- English only.\n"
+    )
+    st = approved_run(rfp)
+    draft = " ".join(st["draft_sections"].values())
+    assert "days-sales-outstanding" in draft
+    assert "30 percent" in draft                      # the tender's 25% + margin
+    blocked = [e for e in st["overall_traceability"]
+               if "days-sales-outstanding" in e.claim_text
+               and e.verification_status == VerificationStatus.GAP]
+    assert blocked, "an uncited threshold claim must be rejected"
