@@ -361,6 +361,13 @@ def verify_claim(claim: AtomicClaim, evidence_index: dict, semantic_fn) -> dict:
     resolved_all = [ev for ev in (evidence_index.get(cid)
                                   for cid in claim.cited_evidence_ids)
                     if ev is not None]
+    # "Every citation resolves to selected evidence" was enforced and reported for
+    # forward-looking claims only. On a verifiable claim the unresolvable ids were
+    # filtered out in silence, so a claim citing one real passage and one invented
+    # id came back SUPPORTED, reported nothing, and left the invented id on display
+    # as provenance -- on exactly the claims where provenance matters most.
+    unresolved = [cid for cid in claim.cited_evidence_ids
+                  if evidence_index.get(cid) is None]
 
     if not resolved_all:
         match = build_match(claim, None, semantic_fn)
@@ -393,11 +400,24 @@ def verify_claim(claim: AtomicClaim, evidence_index: dict, semantic_fn) -> dict:
         status = VerificationStatus.PARTIAL
         match.notes.append("downgraded from SUPPORTED: evidence under unresolved conflict")
 
+    # A claim carrying a citation that resolves to nothing is showing the reader
+    # fabricated provenance, whatever its supported part says.
+    if unresolved and status == VerificationStatus.SUPPORTED:
+        status = VerificationStatus.PARTIAL
+        if match:
+            match.notes.append("downgraded from SUPPORTED: unresolvable citation")
+
+    reason = reason_string(claim, match, status)
+    if unresolved:
+        reason += ("; CITATION REJECTED: " + ", ".join(unresolved) +
+                   " did not resolve to selected evidence and was stripped")
     return {
         "status": status,
         "match": match,
         "confidence": confidence(match),
-        "reason": reason_string(claim, match, status),
+        "citation_valid": not unresolved,
+        "unresolved_citations": unresolved,
+        "reason": reason,
     }
 
 

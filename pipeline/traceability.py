@@ -9,6 +9,8 @@ requirement-summary roll-up so every requirement appears at least once.
 """
 from __future__ import annotations
 
+import re
+
 import uuid
 
 
@@ -156,8 +158,20 @@ def run(state: ProposalAgentState) -> ProposalAgentState:
     # ProposalDraft assembly
     sections: list[ProposalSection] = []
     human_edits = state.get("human_edits", {})
+    # Ids that never resolved are removed from the rendered text. The verdict says
+    # a rejected citation "was stripped", and it was not -- the fabricated id stayed
+    # on the page, so the reader saw provenance the verifier had already rejected.
+    unresolvable = {cid for r in results.values()
+                    for cid in (r.get("unresolved_citations") or [])}
+
+    def _strip_rejected(markdown: str) -> str:
+        for cid in unresolvable:
+            markdown = markdown.replace(f"[[ev:{cid}]]", "")
+        return re.sub(r"[ \t]{2,}", " ", markdown)
+
     for idx, title in enumerate(state["proposal_outline"]):
-        content = human_edits.get(title, state["draft_sections"].get(title, ""))
+        content = _strip_rejected(
+            human_edits.get(title, state["draft_sections"].get(title, "")))
         sec_claims = [c for c in state["atomic_claims"] if c.section_name == title]
         sec_ev = sorted({
             results[c.claim_id]["match"].evidence_id

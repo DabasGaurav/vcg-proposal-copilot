@@ -365,3 +365,61 @@ def test_a_geography_mismatch_in_any_cited_passage_blocks_supported():
     result = verify_claim(both, {"IN::00": india, "SEA::00": sea}, sem)
     assert result["status"] == VerificationStatus.PARTIAL
     assert "geography" in result["reason"]
+
+
+# --------------------------------------------------------------------------- #
+# "Every citation resolves to selected evidence" was enforced and reported for
+# forward-looking claims only. On a verifiable claim the unresolvable ids were
+# filtered out in silence: a claim citing one real passage and one invented id
+# came back SUPPORTED, reported nothing, and left the invented id on the page.
+# --------------------------------------------------------------------------- #
+CV = EvidenceItem(
+    evidence_id="CV::00", source_id="CV", chunk_id="CV::00", title="CV",
+    chunk_text="Ananya Mehta is a Partner at VCG with 18 years of experience in "
+               "banking and lending operations.",
+    category="TEAM_CV", metadata={}, source_path="data/corpus/CV.md",
+    relevance_score=0.9, selected=True,
+)
+TENURE = ("Ananya Mehta, Partner, has 18 years of experience in banking and "
+          "lending operations.")
+
+
+def test_a_fabricated_citation_is_reported_and_blocks_supported():
+    sem = VectorStore.load().semantic_similarity
+
+    clean = AtomicClaim(**decompose_claims("Team", f"{TENURE} [[ev:CV::00]]")[0])
+    good = verify_claim(clean, {"CV::00": CV}, sem)
+    assert good["status"] == VerificationStatus.SUPPORTED
+    assert good["unresolved_citations"] == []
+    assert good["citation_valid"] is True
+
+    invented = AtomicClaim(**decompose_claims(
+        "Team", f"{TENURE} [[ev:CV::00]] [[ev:TOTALLY_MADE_UP::99]]")[0])
+    assert invented.cited_evidence_ids == ["CV::00", "TOTALLY_MADE_UP::99"]
+    bad = verify_claim(invented, {"CV::00": CV}, sem)
+    assert bad["status"] == VerificationStatus.PARTIAL
+    assert bad["unresolved_citations"] == ["TOTALLY_MADE_UP::99"]
+    assert bad["citation_valid"] is False
+    assert "CITATION REJECTED" in bad["reason"]
+
+
+def test_a_rejected_citation_is_actually_removed_from_the_drafted_text():
+    """The verdict said a rejected citation "was stripped" while the fabricated id
+    stayed on the page, so the reader saw provenance the verifier had rejected."""
+    from pipeline.graph import continue_approved_pipeline, run_pipeline
+    from pipeline.qualification import record_decision
+
+    config.ensure_dirs()
+    VectorStore.ensure_seeded()
+    state = run_pipeline(
+        str(config.FIXTURE_DIR / "abc_bank_lending_transformation.md"),
+        run_id="test-stripped", persist=False,
+    )
+    record_decision(state, "BID", "test", "citation stripping")
+    state = continue_approved_pipeline(state, persist=False)
+
+    rejected = {cid for r in state["_verification_results"].values()
+                for cid in (r.get("unresolved_citations") or [])}
+    body = "\n".join(s.content_markdown for s in state["proposal_draft"].sections)
+    for cid in rejected:
+        assert f"[[ev:{cid}]]" not in body, cid
