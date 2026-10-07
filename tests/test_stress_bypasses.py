@@ -474,3 +474,67 @@ def test_the_rendered_draft_never_shows_a_citation_that_does_not_resolve():
     shown = set(_re.findall(r"\[\[ev:([^\]]+)\]\]", body))
     assert shown, "no citations rendered at all"
     assert not (shown - resolvable), sorted(shown - resolvable)
+
+
+# --------------------------------------------------------------------------- #
+# Third bypass in a row from an allow-list of verbs. "involved a tiered
+# auto-decisioning model ... resulting in a 18 percent reduction in approval
+# turnaround time versus a matched baseline" is a stated past result, and
+# "involved"/"resulting" were on neither the achievement nor the past-result
+# list, so the figure was exempted and reported as a prospective statement.
+# --------------------------------------------------------------------------- #
+def test_any_figure_is_checked_whatever_the_verb():
+    from services.mock_llm import is_verifiable_assertion
+    from services.text import extract_named_entities, extract_numeric_tokens
+
+    def verifiable(text: str) -> bool:
+        return is_verifiable_assertion(
+            text, [t.raw for t in extract_numeric_tokens(text)],
+            extract_named_entities(text))
+
+    assert verifiable(
+        "This pilot, mirroring the approach used for a large Indian retail bank, "
+        "involved a tiered auto-decisioning model, resulting in a 18 percent "
+        "reduction in approval turnaround time versus a matched baseline.")
+    assert verifiable("The engagement wrapped up inside 9 weeks.")
+    assert verifiable("A comparable programme put Rs 240 crore back on the table.")
+    # still not claims
+    assert not verifiable("We will deliver the pilot in weeks 1 to 4.")
+    assert not verifiable("This proposal is structured in 7 sections as set out below.")
+
+
+def test_the_pronoun_one_is_not_a_figure():
+    """Digitising word-numbers turned "the result is one the client can audit"
+    into a 1, which made a methodology sentence a numeric claim."""
+    assert extract_numeric_tokens("is one the client can audit") == []
+    assert [t.value for t in extract_numeric_tokens("twenty-one percent")] == [21.0]
+
+
+# --------------------------------------------------------------------------- #
+# The model also makes the citation the sentence's subject, so stripping the tag
+# left a sentence starting with a lowercase verb; the capital-letter requirement
+# never fired and four assertions became one 650-character claim with one verdict.
+# --------------------------------------------------------------------------- #
+SUBJECT_TAGS = (
+    "VCG has a proven track record of redesigning retail lending operations for "
+    "banks across India. [[ev:CHK-014::CASE_BANK_001::00.00]] demonstrates our "
+    "experience, with Ananya Mehta leading the practice. "
+    "[[ev:CHK-003::CV_001::01.00]] details a previous engagement where VCG mapped "
+    "the value stream. [[ev:CHK-016::CASE_BANK_001::02.00]] highlights a pilot "
+    "where approval turnaround time was reduced by 18 percent."
+)
+
+
+def test_a_citation_acting_as_the_subject_still_starts_a_new_sentence():
+    from services.llm import sentences
+
+    out = sentences(SUBJECT_TAGS)
+    assert len(out) == 4, out
+    assert all(len(s) < 220 for s in out), [len(s) for s in out]
+
+
+def test_a_trailing_citation_still_stays_with_its_own_sentence():
+    from services.llm import sentences
+
+    assert sentences("We did one thing. [[ev:A]] Then we did another. [[ev:B]]") == [
+        "We did one thing. [[ev:A]]", "Then we did another. [[ev:B]]"]

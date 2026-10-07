@@ -714,36 +714,32 @@ _ACHIEVEMENT_RE = re.compile(
     re.I,
 )
 
-# A result asserted in the past tense is a claim about the world even when the
-# firm is not the grammatical subject. "A previous engagement demonstrated a
-# 18 percent reduction" has no VCG/we subject and no capitalised name, so the
-# three rules below all missed it: the figure was exempted from verification and
-# then labelled a prospective statement, which it plainly is not. Any past-tense
-# result carrying a figure is checked.
-_PAST_RESULT_RE = re.compile(
-    r"\b(demonstrated|generated|produced|yielded|showed|recorded|realised|"
-    r"realized|saved|returned|completed|resulted|was|were|had)\b",
-    re.I,
-)
-
-
 def is_verifiable_assertion(frag: str, numeric, entities) -> bool:
     """One rule, used by every claim splitter.
 
-    Default to checking: anything a firm asserts about itself, any named person
-    tied to a figure, any achievement, and any past-tense result carrying a
-    figure is a claim. Prospective statements and sentences that only describe
-    the proposal document are not. This lived in two files that drifted apart;
-    it now lives here and real_llm imports it.
+    ANY figure is checked. Three bypasses in a row came from an allow-list of
+    verbs: first achievement verbs, then past-tense result verbs, and then
+    "involved a tiered auto-decisioning model ... resulting in a 18 percent
+    reduction in approval turnaround time versus a matched baseline" -- a stated
+    past result exempted from verification and reported as a prospective
+    statement, because "involved" and "resulting" were on neither list. A figure
+    is the thing that gets misstated, so a sentence carrying one is a claim
+    however it is phrased, and the verb lists now only decide the sentences that
+    carry no figure at all.
+
+    Not claims: prospective statements, and sentences describing the proposal
+    document rather than the world ("structured in 7 sections as set out below").
+
+    This lived in two files that drifted apart; it now lives here and real_llm
+    imports it.
     """
     if is_prospective(frag):
         return False
     framing = bool(_FRAMING_RE.search(frag))
     return bool(
-        (bool(_FIRM_SUBJECT_RE.search(frag)) and not framing)
-        or (bool(entities) and bool(numeric))
-        or (bool(_ACHIEVEMENT_RE.search(frag)) and (numeric or entities))
-        or (bool(_PAST_RESULT_RE.search(frag)) and bool(numeric) and not framing)
+        (bool(numeric) and not framing)
+        or (bool(_FIRM_SUBJECT_RE.search(frag)) and not framing)
+        or (bool(_ACHIEVEMENT_RE.search(frag)) and bool(entities))
     )
 
 

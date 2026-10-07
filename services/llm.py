@@ -75,16 +75,38 @@ _TAG_RUN = r"(?:\s*\[\[[^\]]*\]\])*"
 _SENT_SPLIT = re.compile(rf"(?<=[.!?])(?P<tags>{_TAG_RUN})\s+(?=[\"\'(\[]?[A-Z])")
 
 
+# The model also makes the citation the grammatical subject:
+#   "... across India. [[ev:CASE_BANK_001::00.00]] demonstrates our experience,
+#    with Ananya Mehta ... [[ev:CV_001::01.00]] details a previous engagement
+#    where ... [[ev:CASE_BANK_001::02.00]] highlights a pilot ..."
+# Stripping the tag leaves a sentence starting with a lowercase verb, so the
+# capital-letter requirement never fired and four assertions became one
+# 650-character claim with one verdict. Here the tag belongs to the sentence that
+# FOLLOWS it, so the boundary goes before the tags rather than after them.
+_SENT_SPLIT_LOWER = re.compile(rf"(?<=[.!?])\s+(?={_TAG_RUN.strip()}\s*[a-z])")
+
+
 def split_sentences(chunk: str) -> list[str]:
-    """Split on sentence boundaries, keeping each sentence's citation tags."""
+    """Split on sentence boundaries, keeping each sentence's citation tags.
+
+    A trailing citation stays with the sentence it follows; a citation acting as
+    the next sentence's subject goes with that sentence instead.
+    """
+    cuts = set()
+    for m in _SENT_SPLIT.finditer(chunk):
+        cuts.add((m.start() + len(m.group("tags")), m.end()))
+    for m in _SENT_SPLIT_LOWER.finditer(chunk):
+        cuts.add((m.start(), m.end()))
+
     out: list[str] = []
     last = 0
-    for m in _SENT_SPLIT.finditer(chunk):
-        cut = m.start() + len(m.group("tags"))
+    for cut, resume in sorted(cuts):
+        if cut < last:
+            continue
         piece = chunk[last:cut].strip()
         if piece:
             out.append(piece)
-        last = m.end()
+        last = resume
     tail = chunk[last:].strip()
     if tail:
         out.append(tail)

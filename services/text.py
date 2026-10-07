@@ -117,9 +117,14 @@ _ONES = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
          "nineteen": 19}
 _TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fourty": 40, "fifty": 50,
          "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90}
+# "one" on its own is usually a pronoun or an article, not a figure: "the result
+# is one the client can audit" was digitised to a 1, which made a methodology
+# sentence a numeric claim and sent it to the verifier as an orphan gap. It stays
+# valid as the second half of a compound ("twenty-one").
+_SINGLE = [w for w in _ONES if w != "one"]
 _WORD_NUM = re.compile(
     r"\b(?:(?P<tens>" + "|".join(_TENS) + r")(?:[-\s](?P<ones>"
-    + "|".join(_ONES) + r"))?|(?P<single>" + "|".join(_ONES) + r"))\b", re.I)
+    + "|".join(_ONES) + r"))?|(?P<single>" + "|".join(_SINGLE) + r"))\b", re.I)
 
 
 def _word_value(m: re.Match) -> float:
