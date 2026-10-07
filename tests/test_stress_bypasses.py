@@ -423,3 +423,54 @@ def test_a_rejected_citation_is_actually_removed_from_the_drafted_text():
     body = "\n".join(s.content_markdown for s in state["proposal_draft"].sections)
     for cid in rejected:
         assert f"[[ev:{cid}]]" not in body, cid
+
+
+# --------------------------------------------------------------------------- #
+# The model writes the id inside angle brackets, the way the prompt's own
+# placeholder shows it: [[ev:<CHK-014::CV_001::00.00>]]. "<" is not in the id
+# character class, so the citation was not extracted at all -- a VALID citation
+# was discarded, its claim became an orphan GAP, and because no claim owned the
+# tag nothing reported it, so it stayed on the page as unchecked provenance.
+# --------------------------------------------------------------------------- #
+def test_angle_bracketed_ids_are_unwrapped():
+    from services.mock_llm import normalise_tags
+
+    assert normalise_tags("x [[ev:<CHK-003::CASE_BANK_001::01.00>]].") == \
+        "x [[ev:CHK-003::CASE_BANK_001::01.00]]."
+    assert normalise_tags("y [[req:<CHK-018>]].") == "y [[req:CHK-018]]."
+
+
+def test_an_angle_bracketed_citation_is_extracted_not_discarded():
+    claims = decompose_claims(
+        "Approach",
+        "Ananya Mehta is a Partner at VCG with 18 years of experience "
+        "[[ev:<CHK-014::CV_001::00.00>]].")
+    assert len(claims) == 1
+    assert claims[0]["cited_evidence_ids"] == ["CHK-014::CV_001::00.00"]
+
+
+def test_the_rendered_draft_never_shows_a_citation_that_does_not_resolve():
+    """Keyed on what resolves, not only on what a claim reported as unresolved: a
+    tag the extractor could not parse belonged to no claim, so nothing reported it."""
+    from pipeline.graph import continue_approved_pipeline, run_pipeline
+    from pipeline.qualification import record_decision
+
+    config.ensure_dirs()
+    VectorStore.ensure_seeded()
+    state = run_pipeline(
+        str(config.FIXTURE_DIR / "abc_bank_lending_transformation.md"),
+        run_id="test-citations-shown", persist=False,
+    )
+    record_decision(state, "BID", "test", "citation display")
+    state = continue_approved_pipeline(state, persist=False)
+
+    resolvable = set()
+    for evs in state["selected_evidence"].values():
+        for ev in evs:
+            resolvable.update((ev.evidence_id, ev.source_id, ev.chunk_id))
+
+    import re as _re
+    body = "\n".join(s.content_markdown for s in state["proposal_draft"].sections)
+    shown = set(_re.findall(r"\[\[ev:([^\]]+)\]\]", body))
+    assert shown, "no citations rendered at all"
+    assert not (shown - resolvable), sorted(shown - resolvable)

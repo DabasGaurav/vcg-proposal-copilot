@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import re
 
+from services.mock_llm import normalise_tags
+
 import uuid
 
 
@@ -163,10 +165,23 @@ def run(state: ProposalAgentState) -> ProposalAgentState:
     # on the page, so the reader saw provenance the verifier had already rejected.
     unresolvable = {cid for r in results.values()
                     for cid in (r.get("unresolved_citations") or [])}
+    resolvable = set()
+    for evs in state["selected_evidence"].values():
+        for ev in evs:
+            resolvable.update((ev.evidence_id, ev.source_id, ev.chunk_id))
 
     def _strip_rejected(markdown: str) -> str:
-        for cid in unresolvable:
-            markdown = markdown.replace(f"[[ev:{cid}]]", "")
+        """Remove every citation the reader cannot follow.
+
+        Keyed on what actually resolves, not only on what some claim reported as
+        unresolved. A tag whose markup the extractor could not parse belonged to no
+        claim at all, so it was never reported -- and it stayed on the page
+        displaying provenance nothing had checked.
+        """
+        markdown = normalise_tags(markdown)
+        for cid in set(re.findall(r"\[\[ev:([^\]]+)\]\]", markdown)):
+            if cid in unresolvable or cid not in resolvable:
+                markdown = markdown.replace(f"[[ev:{cid}]]", "")
         return re.sub(r"[ \t]{2,}", " ", markdown)
 
     for idx, title in enumerate(state["proposal_outline"]):

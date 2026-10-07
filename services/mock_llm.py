@@ -681,12 +681,22 @@ _TAG_RUN_JOIN = re.compile(
 )
 
 
+# The model also writes the id inside angle brackets, as the prompt's own
+# placeholder shows it: [[ev:<CHK-014::CV_001::00.00>]]. "<" is not in the id
+# character class, so the citation was not extracted at all -- a VALID citation
+# was discarded, its claim became an orphan GAP, and the tag stayed on the page
+# displaying provenance the verifier had never checked.
+_TAG_ANGLE = re.compile(r"(\[{1,2}\s*(?:ev|req)\s*:\s*)<([^<>\]]+)>", re.I)
+
+
 def normalise_tags(text: str) -> str:
     """Repair the citation markup a generating model actually emits.
 
-    Collapses connector words between adjacent tags and gives every tag the
-    canonical [[kind:id]] form, so tag stripping leaves no residue in the prose.
+    Unwraps angle-bracketed ids, collapses connector words between adjacent tags,
+    and gives every tag the canonical [[kind:id]] form, so tag stripping leaves no
+    residue in the prose and every id reaches validation.
     """
+    text = _TAG_ANGLE.sub(r"\1\2", text)
     prev = None
     while prev != text:                      # runs can be longer than two
         prev = text
