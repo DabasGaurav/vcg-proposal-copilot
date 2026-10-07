@@ -94,8 +94,12 @@ def _direction(text: str, tok) -> str | None:
     """'down', 'up' or None for the movement asserted around a figure."""
     window = context_window_tokens(text, tok.start, tok.end,
                                    config.NUMERIC_CONTEXT_WINDOW).lower()
-    down = any(w in window for w in _DOWN)
-    up = any(w in window for w in _UP)
+    # Whole words only. Substring matching read "up" out of "supplier" and
+    # "group", which made both directions look present, returned "unknown", and
+    # skipped the check on exactly the claims it exists to catch.
+    words = set(re.findall(r"[a-z]+", window))
+    down = bool(words & set(_DOWN))
+    up = bool(words & set(_UP))
     if down == up:          # neither stated, or both -- do not guess
         return None
     return "down" if down else "up"
@@ -104,10 +108,16 @@ def _direction(text: str, tok) -> str | None:
 def _same_magnitude(cn, en) -> bool:
     """Compare like with like. A currency figure carries a scale word, so 5 crore
     and 5 lakh must not compare equal just because both are written '5'."""
-    if cn.canonical_unit() == "currency":
+    unit = cn.canonical_unit()
+    if unit.startswith("currency"):
+        # proportional tolerance on money; the scale word is already applied
         a, b = cn.scaled_value, en.scaled_value
-        tol = max(abs(a), abs(b)) * 0.01       # 1% on money, not 0.5 absolute
+        tol = max(abs(a), abs(b)) * 0.01
         return abs(a - b) <= tol
+    if unit.startswith("credential"):
+        return cn.value == en.value            # an identifier matches exactly
+    if unit == "count":
+        return cn.scaled_value == en.scaled_value   # 240 consultants != 24
     return numbers_match(cn.value, en.value, abs_tol=config.NUMERIC_ABS_TOLERANCE)
 
 

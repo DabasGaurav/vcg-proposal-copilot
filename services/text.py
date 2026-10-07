@@ -89,13 +89,30 @@ def is_locatable(quote: str, haystack: str, *, min_ratio: float = 0.82) -> bool:
 # The consequence was severe: a claim of "35%" produced NO numeric token, so the
 # numeric rule reported "not applicable" and a contradicted figure passed
 # verification. The symbol alternative therefore carries no \b.
+# A number may be written with thousands separators ("2,500"); matching only
+# \d+ truncated it to the leading group, so Rs 2,500 crore and Rs 2,900 crore
+# both parsed as the value 2 and compared equal.
+_NUMBER = r"\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+(?:\.\d+)?"
+
 _NUM_PATTERNS = [
-    re.compile(r"(?P<val>\d+(?:\.\d+)?)\s*(?P<unit>percentage points|percent|pp\b|%)", re.I),
-    re.compile(r"(?P<cur>[$₹€£]|\b(?:rs|inr|usd|eur|gbp)\.?)\s*(?P<val>\d+(?:\.\d+)?)\s*"
+    re.compile(rf"(?P<val>{_NUMBER})\s*(?P<unit>percentage points|percent|pp\b|%)", re.I),
+    re.compile(rf"(?P<cur>[$₹€£]|\b(?:rs|inr|usd|eur|gbp)\.?)\s*(?P<val>{_NUMBER})\s*"
                r"(?P<scale>k\b|m\b|bn\b|billion|million|thousand|crore|lakh|lac)?", re.I),
-    re.compile(r"(?P<val>\d+(?:\.\d+)?)\s*(?P<unit>weeks?|months?|days?|years?)\b", re.I),
-    re.compile(r"\b(?P<val>\d+(?:\.\d+)?)\s*(?P<unit>points?|x)\b", re.I),
+    re.compile(rf"(?P<val>{_NUMBER})\s*(?P<unit>weeks?|months?|days?|years?)\b", re.I),
+    re.compile(rf"\b(?P<val>{_NUMBER})\s*(?P<unit>points?|x)\b", re.I),
+    # A credential identifier is a number that must match exactly: ISO 27001 and
+    # ISO 9001 are different certifications, not a rounding difference.
+    re.compile(rf"\b(?P<unit>iso|iec|soc|pci dss|sae|as|en)\s*(?P<val>{_NUMBER})\b", re.I),
+    # Bare cardinals. Without these a claim of "240 consultants" against evidence
+    # of "24 consultants" produced no token at all, so the numeric rule reported
+    # "not applicable" and the claim passed.
+    re.compile(rf"\b(?P<val>{_NUMBER})\b"),
 ]
+
+# Currencies are distinct units, not one "currency" bucket: USD 7 million and
+# INR 7 million are not the same amount.
+_CUR_CODE = {"$": "usd", "₹": "inr", "€": "eur", "£": "gbp",
+             "rs": "inr", "inr": "inr", "usd": "usd", "eur": "eur", "gbp": "gbp"}
 
 # Indian and international scale words, normalised so 5 crore and 5 lakh are not
 # treated as the same amount.
@@ -135,22 +152,32 @@ class NumericToken:
             return "days"
         if u.startswith("year"):
             return "years"
-        if u in {"$", "₹", "€", "£"} or u.rstrip(".") in {"rs", "inr", "usd", "eur", "gbp"}:
-            return "currency"
-        return u or "number"
+        code = _CUR_CODE.get(u.rstrip("."))
+        if code:
+            return f"currency:{code}"          # distinct per currency
+        if u in {"iso", "iec", "soc", "pci dss", "sae", "as", "en"}:
+            return f"credential:{u}"           # must match exactly
+        return u or "count"
 
 
 def extract_numeric_tokens(text: str) -> list[NumericToken]:
     out: list[NumericToken] = []
-    seen: set[tuple[int, int]] = set()
+    claimed: list[tuple[int, int]] = []
+
+    def _overlaps(a: int, b: int) -> bool:
+        return any(a < end and start < b for start, end in claimed)
+
+    # Patterns run most-specific first; the bare-cardinal pattern at the end must
+    # not re-emit digits a richer pattern already consumed, or "18 percent" would
+    # yield a percent token AND a bare count for the same figure and the count
+    # would then look unmatched.
     for pat in _NUM_PATTERNS:
         for m in pat.finditer(text):
-            span = (m.start(), m.end())
-            if span in seen:
+            if _overlaps(m.start(), m.end()):
                 continue
-            seen.add(span)
+            claimed.append((m.start(), m.end()))
             try:
-                val = float(m.group("val"))
+                val = float(m.group("val").replace(",", ""))
             except (ValueError, IndexError):
                 continue
             unit = ""

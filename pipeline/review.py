@@ -147,16 +147,28 @@ def _commercial_digest(state) -> str:
     """
     import hashlib
 
+    from services.text import extract_numeric_tokens
+
     draft = state.get("proposal_draft")
     parts = []
     for sec in (draft.sections if draft else []):
-        if "commercial" in sec.title.lower() or "fee" in sec.title.lower():
-            parts.append(sec.content_markdown or "")
-    parts.extend(sorted(
-        f"{k}:{v}" for k, v in (state.get("human_edits") or {}).items()
-        if "commercial" in k.lower()
-    ))
+        body = sec.content_markdown or ""
+        commercial_section = ("commercial" in sec.title.lower()
+                              or "fee" in sec.title.lower())
+        # A price inserted into any other section escapes a digest that only
+        # covers the commercial heading, so any section carrying a monetary
+        # amount is part of what the partner signed off.
+        carries_money = any(t.canonical_unit().startswith("currency")
+                            for t in extract_numeric_tokens(body))
+        if commercial_section or carries_money:
+            parts.append(f"{sec.title}:{body}")
     return hashlib.sha256("\u241f".join(parts).encode("utf-8")).hexdigest()[:16]
+
+
+def commercial_approval_current(state) -> bool:
+    """True when a recorded partner sign-off still matches the content."""
+    price = state.get("price_approval")
+    return bool(price) and price.get("commercial_digest") == _commercial_digest(state)
 
 
 def approve_price(state, reviewer: str, commercial_reference: str,

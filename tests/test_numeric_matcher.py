@@ -8,7 +8,9 @@ from pipeline.verification import numeric_consistency
 def test_extracts_percentages_durations_currency():
     toks = extract_numeric_tokens("reduced TAT by 18 percent over 16 weeks, saving $2m")
     units = sorted(t.canonical_unit() for t in toks)
-    assert "percent" in units and "weeks" in units and "currency" in units
+    assert "percent" in units and "weeks" in units
+    # currencies are identified, not pooled: USD 7m and INR 7m are different sums
+    assert any(u.startswith("currency:") for u in units)
 
 
 def test_rounding_tolerance():

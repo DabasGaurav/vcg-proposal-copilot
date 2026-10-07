@@ -111,3 +111,93 @@ def test_commercial_approval_is_invalidated_by_a_later_edit():
     ok, reasons = review.can_export(st)
     assert not ok
     assert any("changed after partner sign-off" in r for r in reasons)
+
+
+# --- second audit round: typed quantity comparison --------------------------
+# The first round fixed individual examples; these close the classes behind them.
+
+def test_currencies_are_distinct_units():
+    """USD 7 million and INR 7 million are not the same sum. Collapsing every
+    currency into one "currency" bucket made them compare equal."""
+    assert numeric_consistency("Saved USD 7 million", "Saved INR 7 million.") is False
+    assert numeric_consistency("Saved USD 7 million", "Saved USD 7 million.") is True
+
+
+def test_thousands_separators_are_not_truncated():
+    """"Rs 2,500 crore" matched only the leading "2", so 2,500 and 2,900 both
+    parsed as the value 2 and compared equal."""
+    tok = extract_numeric_tokens("saved Rs 2,500 crore")[0]
+    assert tok.value == 2500
+    assert numeric_consistency("saved Rs 2,500 crore",
+                               "The programme saved Rs 2,900 crore.") is False
+
+
+def test_equivalent_scales_still_match():
+    assert numeric_consistency("a mandate worth INR 2 crore",
+                               "The mandate was worth Rs 200 lakh.") is True
+
+
+def test_credential_identifiers_must_match_exactly():
+    """Recognising an ISO claim as factual does not check WHICH standard."""
+    assert numeric_consistency("VCG is ISO 27001 certified",
+                               "VCG is ISO 9001 certified.") is False
+    assert numeric_consistency("VCG is ISO 27001 certified",
+                               "VCG is ISO 27001 certified.") is True
+    assert numeric_consistency("holds a SOC 2 attestation",
+                               "holds a SOC 1 attestation.") is False
+
+
+def test_bare_counts_are_compared():
+    """A headcount produced no token at all, so the rule reported "not
+    applicable" and 240 passed against evidence of 24."""
+    assert numeric_consistency("Employs 240 consultants",
+                               "The firm employs 24 consultants.") is False
+    assert numeric_consistency("Employs 240 consultants",
+                               "The firm employs 240 consultants.") is True
+
+
+def test_direction_matches_whole_words_only():
+    """"supplier" and "group" contain "up". Substring matching saw both
+    directions, returned "unknown", and skipped the check."""
+    assert numeric_consistency("Reduced supplier costs by 23 percent",
+                               "Increased supplier costs by 23 percent.") is False
+    assert numeric_consistency("Reduced group overheads by 23 percent",
+                               "Increased group overheads by 23 percent.") is False
+
+
+def test_a_specific_unit_does_not_also_emit_a_bare_count():
+    """Overlapping patterns would make "18 percent" yield a percent token and a
+    bare count for the same digits, and the count would look unmatched."""
+    toks = extract_numeric_tokens("reduced turnaround by 18 percent")
+    assert [t.canonical_unit() for t in toks] == ["percent"]
+
+
+def test_a_price_inserted_in_another_section_invalidates_sign_off():
+    """The digest covered only commercially-titled sections, so a fee written
+    into the Executive Summary escaped it entirely."""
+    st = run_pipeline(str(config.FIXTURE_DIR / "abc_bank_lending_transformation.md"),
+                      persist=False)
+    record_decision(st, "BID", "lead", "proceed")
+    st = continue_approved_pipeline(st, persist=False)
+    review.approve_price(st, "partner", "quote-001", "checked")
+    assert review.commercial_approval_current(st)
+
+    review.apply_human_edit(st, "Executive Summary",
+                            "Our fee for this engagement is Rs 2 crore.")
+    assert not review.commercial_approval_current(st)
+
+
+def test_a_stale_sign_off_can_be_given_again():
+    """The interface hid the approval control whenever a record existed, so a
+    reviewer could not re-approve after an edit and release stayed blocked with
+    no way forward."""
+    st = run_pipeline(str(config.FIXTURE_DIR / "abc_bank_lending_transformation.md"),
+                      persist=False)
+    record_decision(st, "BID", "lead", "proceed")
+    st = continue_approved_pipeline(st, persist=False)
+    review.approve_price(st, "partner", "quote-001", "checked")
+    review.apply_human_edit(st, "Commercial", "**Fee: 2 Cr** - revised terms.")
+    assert not review.commercial_approval_current(st)
+
+    review.approve_price(st, "partner", "quote-002", "re-checked after revision")
+    assert review.commercial_approval_current(st)

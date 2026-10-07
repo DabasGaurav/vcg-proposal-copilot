@@ -623,10 +623,20 @@ with tab_review:
 
     st.markdown('<div class="sec-h">Commercial sign-off</div>', **H)
     price_approval = state.get("price_approval")
-    if price_approval:
+    price_current = review.commercial_approval_current(state)
+    if price_approval and price_current:
         st.success("Partner approved commercial response: " +
                    price_approval["commercial_reference"])
     else:
+        if price_approval and not price_current:
+            # The approval record is kept for the audit trail, but it no longer
+            # matches the content. Hiding the form here left the reviewer unable
+            # to re-approve through the interface at all.
+            st.warning(
+                f"The commercial content changed after "
+                f"{price_approval['reviewer']} approved "
+                f"{price_approval['commercial_reference']}. That sign-off no "
+                f"longer applies and release is blocked until it is given again.")
         st.caption("The partner approves the separate price or rate-card reference before release.")
         price_reviewer = st.text_input("Partner name", key="price_reviewer")
         sample_rate_ref = (state.get("system_inputs") or {}).get("rate_card", {}).get("reference", "")
