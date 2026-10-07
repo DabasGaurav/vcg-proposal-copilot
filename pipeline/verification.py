@@ -286,8 +286,8 @@ def verify_claim(claim: AtomicClaim, evidence_index: dict, semantic_fn) -> dict:
                 "confidence": 1.0,
                 "citation_valid": False,
                 "unresolved_citations": unresolved,
-                "reason": ("FORWARD_LOOKING: prospective statement, not a historical "
-                           "claim. CITATION REJECTED: " + ", ".join(unresolved) +
+                "reason": ("FORWARD_LOOKING: not a verifiable assertion about the past. "
+                           "CITATION REJECTED: " + ", ".join(unresolved) +
                            " did not resolve to selected evidence and was stripped."),
             }
         return {
@@ -296,7 +296,7 @@ def verify_claim(claim: AtomicClaim, evidence_index: dict, semantic_fn) -> dict:
             "confidence": 1.0,
             "citation_valid": True,
             "unresolved_citations": [],
-            "reason": "FORWARD_LOOKING: prospective statement, not a historical claim.",
+            "reason": "FORWARD_LOOKING: not a verifiable assertion about the past.",
         }
 
     # Step 1-2: citation exists, and cited ids are real + were selected

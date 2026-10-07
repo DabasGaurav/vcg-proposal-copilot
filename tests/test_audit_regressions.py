@@ -276,3 +276,79 @@ def test_an_unsupported_assertion_blocks_release():
     assert any(r.verification_status == VerificationStatus.GAP
                and "proprietary clinical" in r.claim_text
                for r in st["overall_traceability"])
+
+
+# --------------------------------------------------------------------------- #
+# A past-tense result with a figure escaped verification entirely whenever the
+# firm was not the grammatical subject, and was then reported as a prospective
+# statement. Found in the recorded local-model run: "a previous engagement
+# demonstrated a 18 percent reduction" carried an unchecked figure.
+# --------------------------------------------------------------------------- #
+def test_past_tense_result_with_a_figure_is_checked():
+    from services.mock_llm import decompose_claims
+
+    for text in (
+        "Specifically, a previous engagement demonstrated a 18 percent reduction "
+        "in pilot approval turnaround time.",
+        "The initial pilot, conducted in twelve branches, demonstrated a 18 percent "
+        "reduction in approval turnaround time.",
+        "A comparable programme generated savings of Rs 240 crore for the client.",
+    ):
+        claims = decompose_claims("Approach", text)
+        assert claims, text
+        assert all(c["requires_verification"] for c in claims), text
+
+
+def test_prospective_and_document_framing_stay_exempt():
+    from services.mock_llm import decompose_claims
+
+    for text in ("We will deliver the pilot in weeks 1 to 4.",
+                 "This proposal is structured in 7 sections as set out below."):
+        claims = decompose_claims("Approach", text)
+        assert claims, text
+        assert not any(c["requires_verification"] for c in claims), text
+
+
+def test_both_claim_splitters_share_one_rule():
+    """The rule was copied into mock_llm and real_llm and the copies drifted."""
+    import inspect
+
+    from services import mock_llm, real_llm
+
+    src = inspect.getsource(real_llm)
+    assert "is_verifiable_assertion" in src
+    assert "historical = (" not in src
+    assert callable(mock_llm.is_verifiable_assertion)
+
+
+def test_the_overclaim_is_rejected_on_the_figure_not_on_a_missing_citation():
+    """The headline demo is "a contradicted figure cannot pass verification".
+
+    While the drafted overclaim carried no citation it was only ever rejected as
+    an orphan, so the numeric rule never fired in the visible run. It now cites
+    the real results passage, and must be rejected because 35 percent
+    contradicts the 18 percent that passage reports.
+    """
+    import config
+    from pipeline.graph import continue_approved_pipeline, run_pipeline
+    from pipeline.qualification import record_decision
+    from services.vectorstore import VectorStore
+
+    config.ensure_dirs()
+    VectorStore.ensure_seeded()
+    state = run_pipeline(
+        str(config.FIXTURE_DIR / "abc_bank_lending_transformation.md"),
+        run_id="test-overclaim", persist=False,
+    )
+    record_decision(state, "BID", "test", "overclaim regression")
+    state = continue_approved_pipeline(state, persist=False)
+
+    results = state["_verification_results"]
+    over = [c for c in state["atomic_claims"] if "35 percent" in c.claim_text]
+    assert over, "the drafter no longer produces the threshold overclaim"
+    for claim in over:
+        verdict = results[claim.claim_id]
+        assert verdict["status"].value == "GAP"
+        assert claim.cited_evidence_ids, "the overclaim must cite a real passage"
+        assert "CONTRADICTED" in verdict["reason"]
+        assert "orphan" not in verdict["reason"]

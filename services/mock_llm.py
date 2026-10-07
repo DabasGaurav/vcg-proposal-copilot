@@ -553,14 +553,25 @@ def draft_section(
                 # evaluation criterion actually does -- it asserts a figure that
                 # clears the bar, with nothing behind it. The claim is built from
                 # the tender's OWN metric and threshold rather than a fixed
-                # sentence, so it stays plausible for whatever is being bid on,
-                # and it carries no citation. Verification rejects it as an
-                # orphan claim. In LLM_PROVIDER=ollama the live model produces
-                # this class of claim unprompted.
+                # sentence, so it stays plausible for whatever is being bid on.
+                # In LLM_PROVIDER=ollama the live model produces this class of
+                # claim unprompted.
+                #
+                # It cites the real results passage when one was selected. A
+                # drafter inventing a figure does not leave it unattributed -- it
+                # hangs the invented number on a genuine source, which is the hard
+                # case. Left uncited the claim was only ever rejected for citing
+                # nothing, so the numeric rule never actually fired in the demo
+                # and "a contradicted figure cannot pass" rested on unit tests
+                # alone. With the citation present the verifier has to compare
+                # 35 percent against the 18 percent the cited passage reports and
+                # reject it on the figure itself.
                 metric = _threshold_metric(item["requirement_text"], pct)
+                cite = (f" [[ev:{metric_case['evidence_id']}]]"
+                        if metric_case is not None else "")
                 para.append(
                     f"In a comparable engagement, VCG delivered a "
-                    f"{pct + 5:g} percent {metric}.{rid}"
+                    f"{pct + 5:g} percent {metric}.{cite}{rid}"
                 )
                 continue
             if metric_case is not None and not emitted_grounded and (
@@ -662,6 +673,38 @@ _ACHIEVEMENT_RE = re.compile(
     re.I,
 )
 
+# A result asserted in the past tense is a claim about the world even when the
+# firm is not the grammatical subject. "A previous engagement demonstrated a
+# 18 percent reduction" has no VCG/we subject and no capitalised name, so the
+# three rules below all missed it: the figure was exempted from verification and
+# then labelled a prospective statement, which it plainly is not. Any past-tense
+# result carrying a figure is checked.
+_PAST_RESULT_RE = re.compile(
+    r"\b(demonstrated|generated|produced|yielded|showed|recorded|realised|"
+    r"realized|saved|returned|completed|resulted|was|were|had)\b",
+    re.I,
+)
+
+
+def is_verifiable_assertion(frag: str, numeric, entities) -> bool:
+    """One rule, used by every claim splitter.
+
+    Default to checking: anything a firm asserts about itself, any named person
+    tied to a figure, any achievement, and any past-tense result carrying a
+    figure is a claim. Prospective statements and sentences that only describe
+    the proposal document are not. This lived in two files that drifted apart;
+    it now lives here and real_llm imports it.
+    """
+    if is_prospective(frag):
+        return False
+    framing = bool(_FRAMING_RE.search(frag))
+    return bool(
+        (bool(_FIRM_SUBJECT_RE.search(frag)) and not framing)
+        or (bool(entities) and bool(numeric))
+        or (bool(_ACHIEVEMENT_RE.search(frag)) and (numeric or entities))
+        or (bool(_PAST_RESULT_RE.search(frag)) and bool(numeric) and not framing)
+    )
+
 
 # A present-tense assertion about the firm is a factual claim even with no
 # past-tense achievement verb in it. "VCG is ISO 27001 certified" and "VCG
@@ -721,26 +764,7 @@ def decompose_claims(section_title: str, section_markdown: str) -> list[dict]:
             numeric = [t.raw for t in extract_numeric_tokens(frag)]
             entities = extract_named_entities(frag)
             quals = extract_context_qualifiers(frag)
-            low = frag.lower()
-            achievement = bool(_ACHIEVEMENT_RE.search(frag))
-            # a historical (verifiable) claim = a VCG/person achievement, or a
-            # named person tied to a number. A bare number that just restates the
-            # RFP ("delivered within 12 weeks") is framing, not a claim.
-            firm_subject = bool(_FIRM_SUBJECT_RE.search(frag))
-            framing = bool(_FRAMING_RE.search(frag))
-            # Default to checking. An allow-list of achievement verbs meant any
-            # assertion phrased outside it -- "VCG owns proprietary software",
-            # "VCG was founded by former regulators" -- was exempted from
-            # verification rather than flagged as unsupported, which is the exact
-            # failure this product exists to prevent. Anything a firm states
-            # about itself is a claim unless it is prospective or is describing
-            # the proposal document itself.
-            historical = (
-                (firm_subject and not framing)
-                or (bool(entities) and bool(numeric))
-                or (achievement and (numeric or entities))
-            )
-            requires_verification = bool(historical and not prospective)
+            requires_verification = is_verifiable_assertion(frag, numeric, entities)
             out.append(
                 {
                     "claim_id": f"CLM-{section_title[:3].upper()}-{n:03d}",
