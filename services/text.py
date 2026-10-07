@@ -83,23 +83,42 @@ def is_locatable(quote: str, haystack: str, *, min_ratio: float = 0.82) -> bool:
 # --------------------------------------------------------------------------- #
 # Numeric tokens (SPEC Section 15 step 5)
 # --------------------------------------------------------------------------- #
+# NOTE on the percent pattern: a trailing \b after the alternation silently
+# dropped every figure written with the SYMBOL. "%" is a non-word character, so
+# \b required a word character after it, which "35%" at a clause end never has.
+# The consequence was severe: a claim of "35%" produced NO numeric token, so the
+# numeric rule reported "not applicable" and a contradicted figure passed
+# verification. The symbol alternative therefore carries no \b.
 _NUM_PATTERNS = [
-    re.compile(r"(?P<val>\d+(?:\.\d+)?)\s*(?P<unit>%|percent|percentage points|pp)\b", re.I),
-    re.compile(r"(?P<cur>[$₹€£])\s*(?P<val>\d+(?:\.\d+)?)\s*(?P<scale>k|m|bn|billion|million|thousand|crore|lakh)?", re.I),
+    re.compile(r"(?P<val>\d+(?:\.\d+)?)\s*(?P<unit>percentage points|percent|pp\b|%)", re.I),
+    re.compile(r"(?P<cur>[$₹€£]|\b(?:rs|inr|usd|eur|gbp)\.?)\s*(?P<val>\d+(?:\.\d+)?)\s*"
+               r"(?P<scale>k\b|m\b|bn\b|billion|million|thousand|crore|lakh|lac)?", re.I),
     re.compile(r"(?P<val>\d+(?:\.\d+)?)\s*(?P<unit>weeks?|months?|days?|years?)\b", re.I),
-    re.compile(r"\b(?P<val>\d+(?:\.\d+)?)\s*(?P<unit>points?|x|percent)\b", re.I),
+    re.compile(r"\b(?P<val>\d+(?:\.\d+)?)\s*(?P<unit>points?|x)\b", re.I),
 ]
+
+# Indian and international scale words, normalised so 5 crore and 5 lakh are not
+# treated as the same amount.
+_SCALE = {"k": 1e3, "thousand": 1e3, "m": 1e6, "million": 1e6, "lakh": 1e5,
+          "lac": 1e5, "crore": 1e7, "bn": 1e9, "billion": 1e9}
 
 
 class NumericToken:
-    __slots__ = ("value", "unit", "raw", "start", "end")
+    __slots__ = ("value", "unit", "raw", "start", "end", "scale")
 
-    def __init__(self, value: float, unit: str, raw: str, start: int, end: int):
-        self.value = value
+    def __init__(self, value: float, unit: str, raw: str, start: int, end: int,
+                 scale: str | None = None):
+        self.value = value            # the magnitude as written
         self.unit = unit
         self.raw = raw
         self.start = start
         self.end = end
+        self.scale = (scale or "").lower().strip() or None
+
+    @property
+    def scaled_value(self) -> float:
+        """Magnitude with its scale word applied, so 5 crore != 5 lakh."""
+        return self.value * _SCALE.get(self.scale, 1.0)
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
         return f"NumericToken({self.raw!r}, value={self.value}, unit={self.unit!r})"
@@ -116,7 +135,7 @@ class NumericToken:
             return "days"
         if u.startswith("year"):
             return "years"
-        if u in {"$", "₹", "€", "£"}:
+        if u in {"$", "₹", "€", "£"} or u.rstrip(".") in {"rs", "inr", "usd", "eur", "gbp"}:
             return "currency"
         return u or "number"
 
@@ -135,11 +154,14 @@ def extract_numeric_tokens(text: str) -> list[NumericToken]:
             except (ValueError, IndexError):
                 continue
             unit = ""
-            if "unit" in m.groupdict() and m.group("unit"):
+            gd = m.groupdict()
+            if gd.get("unit"):
                 unit = m.group("unit")
-            elif "cur" in m.groupdict() and m.group("cur"):
+            elif gd.get("cur"):
                 unit = m.group("cur")
-            out.append(NumericToken(val, unit, m.group(0).strip(), m.start(), m.end()))
+            scale = gd.get("scale") if "scale" in gd else None
+            out.append(NumericToken(val, unit, m.group(0).strip(), m.start(), m.end(),
+                                    scale=scale))
     out.sort(key=lambda t: t.start)
     return out
 

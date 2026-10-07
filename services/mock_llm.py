@@ -663,6 +663,20 @@ _ACHIEVEMENT_RE = re.compile(
 )
 
 
+# A present-tense assertion about the firm is a factual claim even with no
+# past-tense achievement verb in it. "VCG is ISO 27001 certified" and "VCG
+# operates in 40 countries" previously classified as not-requiring-verification,
+# so an unsupported credential could reach an approved proposal unchecked --
+# exactly the failure the product exists to prevent.
+_FIRM_SUBJECT_RE = re.compile(r"\b(vcg|we|our firm|the firm)\b", re.I)
+_CREDENTIAL_RE = re.compile(
+    r"\b(certifie[ds]|certification|accredit\w*|attestation|iso\s*\d+|soc\s*2|"
+    r"licen[cs]ed?|registered|member of|ranked|awarded|award|partner of|"
+    r"operates?|employs?|maintains?|holds?)\b",
+    re.I,
+)
+
+
 def _claim_type(frag: str, prospective: bool, numeric: list[str], entities: list[str]) -> str:
     if prospective:
         return "PROPOSED_ACTION"
@@ -702,9 +716,13 @@ def decompose_claims(section_title: str, section_markdown: str) -> list[dict]:
             # a historical (verifiable) claim = a VCG/person achievement, or a
             # named person tied to a number. A bare number that just restates the
             # RFP ("delivered within 12 weeks") is framing, not a claim.
+            firm_subject = bool(_FIRM_SUBJECT_RE.search(frag))
+            credential = bool(_CREDENTIAL_RE.search(frag))
             historical = (
                 (achievement and ("vcg" in low or numeric or entities))
                 or (bool(entities) and bool(numeric))
+                # a credential or a hard count asserted about the firm
+                or (firm_subject and (credential or bool(numeric)))
             )
             requires_verification = bool(historical and not prospective)
             out.append(

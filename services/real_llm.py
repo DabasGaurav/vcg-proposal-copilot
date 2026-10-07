@@ -192,6 +192,20 @@ compound sentences ("X and reduced Y by 5%") into separate items. Preserve any
 numbers or names."""
 
 
+# A present-tense assertion about the firm is a factual claim even with no
+# past-tense achievement verb in it. "VCG is ISO 27001 certified" and "VCG
+# operates in 40 countries" previously classified as not-requiring-verification,
+# so an unsupported credential could reach an approved proposal unchecked --
+# exactly the failure the product exists to prevent.
+_FIRM_SUBJECT_RE = re.compile(r"\b(vcg|we|our firm|the firm)\b", re.I)
+_CREDENTIAL_RE = re.compile(
+    r"\b(certifie[ds]|certification|accredit\w*|attestation|iso\s*\d+|soc\s*2|"
+    r"licen[cs]ed?|registered|member of|ranked|awarded|award|partner of|"
+    r"operates?|employs?|maintains?|holds?)\b",
+    re.I,
+)
+
+
 def decompose_claims(section_title: str, section_markdown: str, *, complete=None) -> list[dict]:
     try:
         raw = complete(_SPLIT_SYS, section_markdown)
@@ -222,8 +236,11 @@ def decompose_claims(section_title: str, section_markdown: str, *, complete=None
             low = frag.lower()
             prospective = mock_llm.is_prospective(frag)
             achievement = bool(mock_llm._ACHIEVEMENT_RE.search(frag))
+            firm_subject = bool(_FIRM_SUBJECT_RE.search(frag))
+            credential = bool(_CREDENTIAL_RE.search(frag))
             historical = ((achievement and ("vcg" in low or numeric or entities))
-                          or (bool(entities) and bool(numeric)))
+                          or (bool(entities) and bool(numeric))
+                          or (firm_subject and (credential or bool(numeric))))
             out.append({
                 "claim_id": f"CLM-{section_title[:3].upper()}-{n:03d}",
                 "section_name": section_title,

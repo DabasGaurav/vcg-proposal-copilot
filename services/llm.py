@@ -55,8 +55,13 @@ def _call_stage(complete, stage: str, system: str, user: str) -> str:
 # silently lost "comparable lending engagement." Real tenders wrap constantly,
 # so this corrupted the requirement text, the retrieval query built from it, and
 # the instruction handed to the drafter.
-_BULLET = re.compile(r"^[ \t]*[-*][ \t]+(.+?)(?=\n[ \t]*[-*][ \t]|\n[ \t]*\n|\n#|\Z)",
-                     re.M | re.S)
+# Tenders number their criteria as often as they bullet them. Matching only
+# "-" and "*" meant a numbered or lettered evaluation list extracted nothing at
+# all, and the run proceeded with zero requirements from that section.
+_MARKER = r"(?:[-*•]|\(?[0-9]{1,2}[.)]|\(?[a-z][.)])"
+_BULLET = re.compile(
+    rf"^[ \t]*{_MARKER}[ \t]+(.+?)(?=\n[ \t]*{_MARKER}[ \t]|\n[ \t]*\n|\n#|\Z)",
+    re.M | re.S)
 _H2 = re.compile(r"^##\s+(.*)$", re.M)
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 

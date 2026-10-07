@@ -61,7 +61,7 @@ Python 3.11+.
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python scripts/seed_corpus.py      # build the evidence index from data/corpus/
-pytest -q                          # 88 tests
+pytest -q                          # 101 tests
 streamlit run app.py
 ```
 
@@ -202,6 +202,8 @@ Stated plainly, because the product's whole claim is that it does not overstate:
   system working, but a run produces a substantial number of them.
 - **Confidence is not calibrated.** It is a weighted blend of the signals, not a
   probability, despite being rendered as a bar.
+- **No per-user isolation.** Saved runs are shared across browser sessions on a
+  single deployment; the hosted URL is a single-tenant demonstration.
 - **Chunking will mishandle tables.** Fixed-size splitting on headings; real
   tender eligibility criteria often live in tables.
 - **No prompt-injection boundary.** Tender text reaches the drafting prompt
@@ -248,7 +250,7 @@ pipeline/                  one module per stage, plus graph.py, qualification.py
 services/                  corpus loader, embeddings, vector store, LLM providers,
                            costing, persistence, text utilities
 scripts/                   seed_corpus, calibrate, run_demo, record_demo_run
-tests/                     88 tests
+tests/                     101 tests
 app.py, ui.py              Streamlit interface and design tokens
 ```
 

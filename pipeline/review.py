@@ -138,6 +138,27 @@ def override_gap(state, trace_id: str, reason: str, reviewer: str = "reviewer") 
     _persist(state)
 
 
+def _commercial_digest(state) -> str:
+    """Fingerprint of the content a partner is signing off.
+
+    Sign-off has to attach to a specific version. Without this, a partner could
+    approve the commercial response and someone could then rewrite the fee --
+    the approval survived the edit and the export gate still opened.
+    """
+    import hashlib
+
+    draft = state.get("proposal_draft")
+    parts = []
+    for sec in (draft.sections if draft else []):
+        if "commercial" in sec.title.lower() or "fee" in sec.title.lower():
+            parts.append(sec.content_markdown or "")
+    parts.extend(sorted(
+        f"{k}:{v}" for k, v in (state.get("human_edits") or {}).items()
+        if "commercial" in k.lower()
+    ))
+    return hashlib.sha256("\u241f".join(parts).encode("utf-8")).hexdigest()[:16]
+
+
 def approve_price(state, reviewer: str, commercial_reference: str,
                   note: str) -> None:
     """Record partner sign-off for the separately prepared commercial response."""
@@ -151,6 +172,7 @@ def approve_price(state, reviewer: str, commercial_reference: str,
         "commercial_reference": commercial_reference.strip(),
         "note": note.strip(),
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "commercial_digest": _commercial_digest(state),
     }
     get_store().log(state["run_id"], "price_approval", "APPROVED", actor="human",
                     notes=f"{reviewer.strip()}: {commercial_reference.strip()}")
@@ -162,8 +184,14 @@ def can_export(state) -> tuple[bool, list[str]]:
     draft = state["proposal_draft"]
     if (state.get("practice_lead_decision") or {}).get("decision") != "BID":
         reasons.append("practice lead has not approved a BID decision")
-    if not state.get("price_approval"):
+    price = state.get("price_approval")
+    if not price:
         reasons.append("partner has not approved the commercial response")
+    elif price.get("commercial_digest") != _commercial_digest(state):
+        reasons.append(
+            "the commercial response changed after partner sign-off; it must be "
+            "approved again"
+        )
     not_approved = [s.title for s in draft.sections
                     if s.review_status != ReviewDecision.APPROVED]
     if not_approved:

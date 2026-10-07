@@ -79,6 +79,38 @@ def _context_agrees(claim_text: str, evidence_text: str, ev_num) -> bool:
     return len(win_tokens & claim_tokens) >= 1
 
 
+# Direction vocabulary. A figure that matches numerically but points the opposite
+# way is not corroboration: "reduced turnaround by 18 percent" is contradicted,
+# not supported, by evidence that turnaround "increased by 18 percent". These
+# words are excluded from the topical-overlap set above (they appear near every
+# metric), so the direction has to be compared explicitly.
+_DOWN = ("reduced", "reduction", "fell", "dropped", "decreased", "decrease", "cut",
+         "down", "lower", "shortened", "saving", "saved", "freed")
+_UP = ("increased", "increase", "rose", "grew", "growth", "up", "higher",
+       "gained", "lengthened", "added")
+
+
+def _direction(text: str, tok) -> str | None:
+    """'down', 'up' or None for the movement asserted around a figure."""
+    window = context_window_tokens(text, tok.start, tok.end,
+                                   config.NUMERIC_CONTEXT_WINDOW).lower()
+    down = any(w in window for w in _DOWN)
+    up = any(w in window for w in _UP)
+    if down == up:          # neither stated, or both -- do not guess
+        return None
+    return "down" if down else "up"
+
+
+def _same_magnitude(cn, en) -> bool:
+    """Compare like with like. A currency figure carries a scale word, so 5 crore
+    and 5 lakh must not compare equal just because both are written '5'."""
+    if cn.canonical_unit() == "currency":
+        a, b = cn.scaled_value, en.scaled_value
+        tol = max(abs(a), abs(b)) * 0.01       # 1% on money, not 0.5 absolute
+        return abs(a - b) <= tol
+    return numbers_match(cn.value, en.value, abs_tol=config.NUMERIC_ABS_TOLERANCE)
+
+
 def numeric_consistency(claim_text: str, evidence_text: str) -> bool | None:
     """None  -> claim has no numeric token (check not applicable).
     True  -> every numeric token in the claim has a rounding-tolerant match in
@@ -92,9 +124,11 @@ def numeric_consistency(claim_text: str, evidence_text: str) -> bool | None:
     ev_nums = extract_numeric_tokens(evidence_text)
     for cn in claim_nums:
         same_unit = [en for en in ev_nums if en.canonical_unit() == cn.canonical_unit()]
+        claim_dir = _direction(claim_text, cn)
         ok = any(
-            numbers_match(cn.value, en.value, abs_tol=config.NUMERIC_ABS_TOLERANCE)
+            _same_magnitude(cn, en)
             and _context_agrees(claim_text, evidence_text, en)
+            and not (claim_dir and (ed := _direction(evidence_text, en)) and ed != claim_dir)
             for en in same_unit
         )
         if not ok:
