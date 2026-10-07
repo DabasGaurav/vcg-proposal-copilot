@@ -239,3 +239,84 @@ def test_substantiation_counts_distinct_claims_not_trace_entries():
     # and a claim linked twice must not inflate the count
     entries = [e for e in draft.overall_traceability if e.claim_id != "(none)"]
     assert len(entries) >= len({e.claim_id for e in entries})
+
+
+# --------------------------------------------------------------------------- #
+# The generating model does not keep the tag syntax clean. gemma3 emits
+#   [[ev:A] and [ev:B]]
+# which the tag stripper took as two tags, leaving " and " in the prose. That
+# residue stood between a full stop and the next capital, so the boundary was
+# missed and the cited tenure fact carried an uncited assertion to SUPPORTED.
+# --------------------------------------------------------------------------- #
+MALFORMED = (
+    "Ananya Mehta, Partner at VCG, possesses 18 years of experience in banking "
+    "and lending operations. [[ev:CHK-014::CV_001::00.00] and "
+    "[ev:CHK-014::CASE_BANK_001::00.00]]  Furthermore, a key team member has "
+    "previously led retail lending operations redesign for a large Indian bank. "
+    "[[ev:CHK-003::CV_001::01.00]]"
+)
+
+
+def test_malformed_tag_runs_are_repaired():
+    from services.mock_llm import normalise_tags
+
+    out = normalise_tags(MALFORMED)
+    assert "[[ev:CHK-014::CV_001::00.00]] [[ev:CHK-014::CASE_BANK_001::00.00]]" in out
+    assert "] and [" not in out
+
+
+def test_a_malformed_tag_run_does_not_merge_two_sentences():
+    claims = decompose_claims("Team & Credentials", MALFORMED)
+    assert len(claims) == 2, [c["claim_text"] for c in claims]
+    assert " and  Furthermore" not in claims[0]["claim_text"]
+    assert claims[0]["cited_evidence_ids"] == [
+        "CHK-014::CV_001::00.00", "CHK-014::CASE_BANK_001::00.00"]
+    assert claims[1]["cited_evidence_ids"] == ["CHK-003::CV_001::01.00"]
+
+
+def test_longer_connector_runs_collapse():
+    from services.mock_llm import normalise_tags
+
+    out = normalise_tags("x. [[ev:A] and [ev:B] and [ev:C]]")
+    assert out.count("[[ev:") == 3
+    assert " and " not in out
+
+
+# --------------------------------------------------------------------------- #
+# A claim citing several passages was verified against the first that resolved,
+# so a contradiction in the second or third was never seen -- and Rule C is
+# meant to be unoverridable.
+# --------------------------------------------------------------------------- #
+def test_a_contradiction_in_any_cited_passage_is_a_gap():
+    clean = EvidenceItem(
+        evidence_id="CV::00", source_id="CV", chunk_id="CV::00", title="CV",
+        chunk_text="Ananya Mehta is a Partner at VCG with 18 years of experience "
+                   "in banking and lending operations.",
+        category="TEAM_CV", metadata={}, source_path="data/corpus/CV.md",
+        relevance_score=0.9, selected=True,
+    )
+    contradicting = EvidenceItem(
+        evidence_id="CASE::00", source_id="CASE", chunk_id="CASE::00", title="CASE",
+        chunk_text="Ananya Mehta has 11 years of experience in banking and lending "
+                   "operations at the firm.",
+        category="CASE_STUDY", metadata={}, source_path="data/corpus/CASE.md",
+        relevance_score=0.8, selected=True,
+    )
+    sem = VectorStore.load().semantic_similarity
+    sentence = ("Ananya Mehta, Partner, has 18 years of experience in banking and "
+                "lending operations.")
+
+    # cited alone, the clean passage supports it
+    only_clean = _claim(sentence, "CV::00")
+    assert verify_claim(only_clean, {"CV::00": clean}, sem)["status"] == \
+        VerificationStatus.SUPPORTED
+
+    # the clean passage FIRST, the contradicting one second: still a gap
+    raw = decompose_claims("Team & Credentials",
+                           f"{sentence} [[ev:CV::00]] [[ev:CASE::00]]")
+    assert len(raw) == 1
+    both = AtomicClaim(**raw[0])
+    assert both.cited_evidence_ids == ["CV::00", "CASE::00"]
+    result = verify_claim(both, {"CV::00": clean, "CASE::00": contradicting}, sem)
+    assert result["status"] == VerificationStatus.GAP
+    assert "CONTRADICTED" in result["reason"]

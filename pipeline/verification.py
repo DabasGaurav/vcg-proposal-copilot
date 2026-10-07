@@ -345,15 +345,31 @@ def verify_claim(claim: AtomicClaim, evidence_index: dict, semantic_fn) -> dict:
             "reason": "FORWARD_LOOKING: not a verifiable assertion about the past.",
         }
 
-    # Step 1-2: citation exists, and cited ids are real + were selected
-    resolved: EvidenceItem | None = None
-    for cid in claim.cited_evidence_ids:
-        resolved = evidence_index.get(cid)
-        if resolved is not None:
-            break
+    # Step 1-2: citation exists, and cited ids are real + were selected.
+    # EVERY cited passage is checked, not just the first that resolves. A claim
+    # citing three sources was verified against one of them, so a contradiction
+    # in the second or third was never seen -- and Rule C is meant to be
+    # unoverridable. A numeric contradiction against any cited passage is a gap;
+    # otherwise the claim takes the best status it genuinely achieves.
+    resolved_all = [ev for ev in (evidence_index.get(cid)
+                                  for cid in claim.cited_evidence_ids)
+                    if ev is not None]
 
-    match = build_match(claim, resolved, semantic_fn)
-    status = decide(claim, match)
+    if not resolved_all:
+        match = build_match(claim, None, semantic_fn)
+        status = decide(claim, match)
+    else:
+        scored = []
+        for ev in resolved_all:
+            m = build_match(claim, ev, semantic_fn)
+            scored.append((decide(claim, m), m))
+        contradicted = [(st, m) for st, m in scored if m.numeric_match is False]
+        if contradicted:
+            status, match = VerificationStatus.GAP, contradicted[0][1]
+        else:
+            rank = {VerificationStatus.SUPPORTED: 3, VerificationStatus.PARTIAL: 2,
+                    VerificationStatus.GAP: 1, VerificationStatus.FORWARD_LOOKING: 0}
+            status, match = max(scored, key=lambda p: (rank[p[0]], confidence(p[1])))
 
     # a conflicting claim can never auto-resolve to SUPPORTED (SPEC Section 11)
     if match and match.conflict_flag and status == VerificationStatus.SUPPORTED:

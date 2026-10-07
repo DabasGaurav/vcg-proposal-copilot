@@ -664,6 +664,37 @@ def draft_section(
 _CITE_RE = re.compile(r"\[{1,2}\s*ev\s*:\s*([A-Za-z0-9_\-:.]+?)\s*[\]>)]{1,2}")
 _REQ_RE = re.compile(r"\[{1,2}\s*req\s*:\s*([A-Za-z0-9_\-]+?)\s*[\]>)]{1,2}")
 _TAG_RE = re.compile(r"\[{1,2}\s*(?:ev|req)\s*:\s*[A-Za-z0-9_\-:.]+?\s*[\]>)]{1,2}")
+
+# A generating model does not keep the tag syntax clean. gemma3 writes runs like
+#     [[ev:CHK-014::CV_001::00.00] and [ev:CHK-014::CASE_BANK_001::00.00]]
+# which _TAG_RE strips as two separate tags and leaves " and " sitting in the
+# prose. That residue stood between a full stop and the next capital, so the
+# sentence boundary was missed and two sentences became one claim -- the cited
+# tenure fact then carried an uncited assertion through to SUPPORTED. Runs of
+# tags joined by a connector are rewritten as a clean run before anything is
+# parsed out of the text.
+_TAG_RUN_JOIN = re.compile(
+    r"(\[{1,2}\s*(?:ev|req)\s*:\s*[A-Za-z0-9_\-:.]+?\s*[\]>)]{1,2})"
+    r"(?:\s*(?:and|&|,|;|/|or)\s*)"
+    r"(?=\[{1,2}\s*(?:ev|req)\s*:)",
+    re.I,
+)
+
+
+def normalise_tags(text: str) -> str:
+    """Repair the citation markup a generating model actually emits.
+
+    Collapses connector words between adjacent tags and gives every tag the
+    canonical [[kind:id]] form, so tag stripping leaves no residue in the prose.
+    """
+    prev = None
+    while prev != text:                      # runs can be longer than two
+        prev = text
+        text = _TAG_RUN_JOIN.sub(r"\1 ", text)
+    def _canon(m: re.Match) -> str:
+        return "[[" + m.group(1).lower() + ":" + m.group(2) + "]]"
+    return re.sub(r"\[{1,2}\s*(ev|req)\s*:\s*([A-Za-z0-9_\-:.]+?)\s*[\]>)]{1,2}",
+                  _canon, text, flags=re.I)
 # past-tense VCG achievement verbs -- only these (plus a number or a named person)
 # make a sentence a historical claim that must be verified. Framing sentences
 # ("we have read the RFP", "we propose...") are not historical claims.
@@ -749,6 +780,7 @@ def _claim_type(frag: str, prospective: bool, numeric: list[str], entities: list
 def decompose_claims(section_title: str, section_markdown: str) -> list[dict]:
     out: list[dict] = []
     n = 0
+    section_markdown = normalise_tags(section_markdown)
     for sent in sentences(section_markdown):
         if sent.lstrip().startswith("[EVIDENCE GAP") or "HUMAN INPUT REQUIRED" in sent:
             continue
