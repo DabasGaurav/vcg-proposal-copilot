@@ -1,182 +1,269 @@
-# Proposal Copilot Agent
+# Proposal Copilot
 
-**▶ Public simulation: <https://rfp-proposal.streamlit.app/>** — hosted URL for
-the deterministic fixture workflow. It is not a live AI demonstration and may
-still be running an earlier repository version until this branch is deployed.
-For live, fully offline generative AI, run the app locally with Ollama as below.
+Turns an inbound RFP into a source-grounded, review-ready proposal in which
+**every factual statement is traceable to the evidence it was written from** —
+and any statement the evidence does not support is caught before a reviewer
+sees it.
 
-Turns an inbound RFP into a source-grounded, review-ready proposal with full
-**Requirement → Evidence → Draft** traceability and deterministic evidence
-consistency checks. A practice lead must approve the bid before drafting;
-reviewers approve sections and a partner approves the commercial reference
-before export.
+- **Live (deterministic):** <https://rfp-proposal.streamlit.app/>
+- **Live AI:** runs locally on Ollama — no API key, no network, nothing leaves
+  the machine. See [Running with the local model](#running-with-the-local-model).
 
-Built to the spec in [`SPEC.md`](SPEC.md) (a VCG case brief — "VCG" is a
-fictional firm; the corpus and RFP fixtures are synthetic). **Core + Should-have
-+ selected Stretch** are implemented: end-to-end pipeline (RFP → approved
-proposal), traceability matrix, deterministic verifier, Streamlit hero screen,
-section-level approval with edit preservation, SQLite audit log, conflict
-detection, run resumability, local AI via Ollama, optional hosted LiteLLM,
-Phase-0 calibration, and Markdown / CSV / DOCX export. CRM, HR, rate-card,
-and time/billing inputs are fictional local sample files, not live integrations.
+The hosted URL cannot run a local model (Streamlit Community Cloud has no GPU
+and no way to host one), so it runs the deterministic generator and says so in
+the interface. The generative demonstration is the local one.
 
-## The hero moment
+> "VCG" is a fictional firm. The evidence corpus and the four tenders are
+> synthetic and labelled as such. Nothing here depicts a real client,
+> engagement or person.
 
-| RFP Requirement | Evidence | Draft Claim | Status |
+---
+
+## What it actually does
+
+Five stages, with two human gates that cannot be bypassed in code:
+
+| | Stage | Gate |
+|---|---|---|
+| 1 | **Intake** — parse the tender into requirements, each tied to a quotation located in the source document | |
+| 2 | **Qualify** — score evidence coverage, recommend bid / no-bid | **A practice lead must record a decision, a name and a reason before anything is drafted** |
+| 3 | **Draft** — retrieve firm evidence, rank it, write each section from the passages that survived | |
+| 4 | **Verify** — numeric, attribution and context checks, by rule | |
+| 5 | **Release** — section approval + partner commercial sign-off | **No export until every section is approved and every unsupported claim is resolved or overridden with a recorded justification** |
+
+## The demonstration
+
+Running the ABC Bank tender (`python scripts/run_demo.py`) produces, among
+others, these rows — reproduced from a real run:
+
+| Requirement | Evidence | Drafted statement | Verdict |
 |---|---|---|---|
-| Demonstrate lending transformation experience | `CASE_BANK_001` | VCG redesigned retail lending operations for a large Indian bank | **SUPPORTED** |
-| Demonstrate measurable results | `CASE_BANK_001` | Pilot approval turnaround time reduced by **18%** | **SUPPORTED** |
-| Demonstrate >30% TAT improvement | *(none)* | VCG reduced lending TAT by **35%** | **GAP** |
+| Named team members with relevant lending operations experience | `CV_001` | Ananya Mehta, Partner, has 18 years of experience in banking and lending operations | **Substantiated** |
+| Demonstrated experience redesigning retail lending operations | `CASE_BANK_001` | In a retail lending engagement in India, VCG reduced pilot approval turnaround time by 18 percent and reduced manual handoffs by 30 percent | **Substantiated** |
+| Evidence of **greater than 30 percent** turnaround-time improvement | *(none)* | In a comparable engagement, VCG delivered a **35 percent** turnaround-time improvement | **Unsubstantiated** |
 
-18% passes; the unsupported 35% claim is caught before it can reach an approved
-proposal. That single interaction is the demo.
+The last row is the point. The tender demands a threshold the evidence base
+cannot meet, so the drafter does what a writer under pressure to answer every
+evaluation criterion does: it asserts a figure that clears the bar, with nothing
+behind it. That claim is **built from the tender's own metric and threshold**,
+not from a fixed sentence — a tender asking for ">25 percent reduction in
+days-sales-outstanding" produces a claim about days-sales-outstanding. It
+carries no citation, so verification rejects it as an orphan claim and it blocks
+release.
 
-## Run it
+---
+
+## Quick start
+
+Python 3.11+.
 
 ```bash
-python -m venv .venv && source .venv/bin/activate     # Python 3.11+
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python scripts/seed_corpus.py        # build the vector KB from data/corpus/*.md
-python scripts/calibrate.py          # Phase 0: print real scores, propose thresholds
-pytest -q                            # run the current test suite
-streamlit run app.py                 # RFP → Requirements → Execution → Evidence → Draft → 🎯 Traceability → Review
+python scripts/seed_corpus.py      # build the evidence index from data/corpus/
+pytest -q                          # 88 tests
+streamlit run app.py
+```
+
+In the app: pick a tender, **Assess bid fit**, record a practice-lead decision,
+then review the draft, the traceability matrix and the evidence; approve each
+section and the commercial reference to unlock export.
+
+Command line, no browser:
+
+```bash
+python scripts/run_demo.py                                # ABC Bank, prints the matrix
+python scripts/run_demo.py xyz_insurer_actuarial_ai.md    # capability gap -> go/no-go
+python scripts/run_demo.py pqr_bank_procurement_heavy.md  # procurement-governed tender
+python scripts/run_demo.py def_capital_no_rubric.md       # tender with no evaluation rubric
 ```
 
 ### API keys
 
-**There are none to replace.** Generation runs on a local Ollama model, so no
-key is required and no document leaves the machine. `.env.example` lists every
-setting; the only one that would need a credential is the optional hosted
-`LLM_PROVIDER=litellm` path, which is not used for the demonstration.
+**There are none.** Generation runs on a local model, so no credential is
+required and no document leaves the machine. `.env.example` documents every
+setting; the only one that would need a key is the optional hosted
+`LLM_PROVIDER=litellm` path, which the demonstration does not use.
 
-### Running with the local model
+---
+
+## Running with the local model
 
 ```bash
 ollama pull gemma3                 # one-time download, needs internet
-ollama serve                       # if not already running
 LLM_PROVIDER=ollama LLM_MODEL=gemma3:latest streamlit run app.py
 ```
 
-After the pull, inference talks only to `127.0.0.1:11434` — you can disconnect
-the network and the product still works.
+After the pull, inference talks only to `127.0.0.1:11434` — disconnect the
+network and the product still works.
 
-**Which stages use the model.** `config.provider_for()` routes per stage:
+### Which stages use the model, and why
+
+`config.provider_for()` routes per stage. This is a measured decision, not a
+preference:
 
 | Stage | Handler | Why |
 |---|---|---|
-| Extract requirements, plan | Deterministic parser + source-span gate | A 4B local model produced requirements that retrieved no evidence at all (measured: fit 0%, 70 unresolvable citations). Structural parsing with a hallucination gate is both more reliable and faster here |
-| **Draft sections, decompose claims** | **Local Ollama model** | Generation is where a model genuinely earns its place |
-| Verify | Deterministic rules | Never a model. This is the product's whole thesis |
+| Extract, plan | Deterministic parsing behind the source-span gate | Routing these through a 4B local model was **worse**: bid fit scored 0%, no claim was substantiated, and 70 citations resolved to nothing, because model-extracted requirements retrieved no evidence |
+| **Draft sections** | **Local model** | Generation is where a model genuinely earns its place |
+| Decompose claims | Deterministic splitter | Through the model this hung for 14 minutes on 1.4 seconds of CPU — a small model given a bare JSON-array schema has no natural stopping point. Splitting prose into sentences is mechanical |
+| **Verify** | **Deterministic rules — never a model** | This is the product's whole thesis |
 
-Set `LLM_ALL_STAGES=true` to route every stage through the model and reproduce
-the measurement above.
+`LLM_ALL_STAGES=true` routes everything through the model and reproduces the
+measurement above.
 
-### Recording the presentation run
+### Recording a run for a demonstration
 
-A full local pass takes several minutes — too slow to perform live. Record it
-once, then reopen it instantly from the sidebar and perform one short live
-action on top:
+A full local pass takes minutes — too slow to perform live. Record it once, then
+reopen it instantly from the sidebar and perform one short live action on top:
 
 ```bash
 LLM_PROVIDER=ollama LLM_MODEL=gemma3:latest python scripts/record_demo_run.py
 ```
 
-The Execution tab reports measured tokens, latency, the local electricity cost
-and the hosted-API equivalent, with every rate shown as a stated assumption.
+A measured run on an M4 / 16 GB laptop: **7 calls, 10,474 input and 1,924 output
+tokens, 250 s, 5 statements substantiated and 9 blocked.**
 
-Deterministic CLI demo (no API key, no network):
-
-```bash
-python scripts/run_demo.py                                  # abc_bank happy path + hero check
-python scripts/run_demo.py xyz_insurer_actuarial_ai.md      # capability-gap fixture
-python scripts/run_demo.py pqr_bank_procurement_heavy.md    # procedural-heavy fixture
-python scripts/run_demo.py def_capital_no_rubric.md         # no eval criteria + compound-bullet split
-```
+---
 
 ## How it works
 
 ```
-intake → decompose_rfp → validate_requirements (source-span gate; ungrounded → dropped)
-  → plan_response → retrieve_internal → rank_evidence (select/reject w/ reasons)
-  → qualify → practice-lead BID/NO_BID decision
-  → detect_conflicts → optional_web_enrichment (disabled in offline modes)
-  → draft_sections → extract_atomic_claims → deterministic_verify → build_traceability
-  → section review + partner commercial sign-off → export
+intake -> extract + validate (source-span gate; ungrounded requirements dropped)
+  -> plan -> retrieve -> rank (select / reject, each with a recorded reason)
+  -> QUALIFY ------- practice-lead BID / NO-BID gate -------+
+                                                            |
+  -> detect conflicts -> optional external context (off by default)
+  -> draft -> decompose into atomic claims -> VERIFY -> build traceability
+  -> section review + partner commercial sign-off -> export
 ```
 
-Orchestrator is a **plain ordered function chain** (SPEC §0 fallback), each stage
-mutating one `ProposalAgentState` dict and appending to `execution_log`.
+A plain ordered function chain; every stage mutates one `ProposalAgentState` and
+appends to `execution_log`.
 
-**LLMs** interpret, plan, draft, and decompose claims. LLMs are **never** the
-judge of whether their own output is true — that is
-[`pipeline/verification.py`](pipeline/verification.py), which is extractive and
-rule-based only:
+**The model interprets and writes. It never judges whether its own output is
+true.** That is [`pipeline/verification.py`](pipeline/verification.py), which is
+extractive and rule-based:
 
-* **numeric** — every number in a claim must have a rounding-tolerant match in
-  the cited chunk *whose ±20-token context is topically consistent* (catches
-  "35%" that only exists in an unrelated office-electricity doc);
-* **attribution** — defaults valid; set invalid only on a real named-entity
-  contradiction (e.g. "Rohan has 18 years" vs his CV's 12);
-* **context** — a claim's geography/industry qualifier must not be contradicted
-  by the matched evidence's metadata (India claim vs Southeast-Asia evidence → PARTIAL);
-* decision rules A–G are lifted verbatim from SPEC §15.
+- **numeric** — every figure in a claim must have a rounding-tolerant match in
+  the cited passage *whose plus/minus 20-token context is topically consistent*.
+  This is what catches a "35%" that exists in the corpus only in an unrelated
+  document about office electricity.
+- **attribution** — valid by default; invalid only on a real contradiction. The
+  facts are read from the firm's own CV documents, so adding a CV adds a
+  checkable person.
+- **context** — a claim's geography or industry qualifier must not be
+  contradicted by the cited passage's metadata.
+- A contradicted figure can **never** be recorded as substantiated, at any
+  confidence.
 
-Call it **evidence-consistency verification**, not "fact-checking" — it catches
-every error category the demo corpus is built to surface and nothing beyond that.
+Call it **evidence-consistency verification**, not fact-checking. It catches the
+error categories the corpus is built to surface and nothing beyond that.
 
-## Pluggable backends (defaults are offline; switch via `.env`)
+### Every drafted sentence is composed from a cited passage
+
+Section text is not templated. Phase names come from a retrieved methodology
+passage and the engagement length from the tender; each person's name, role and
+tenure are parsed from their own CV passage; the risk register comes from a
+past-engagement passage that enumerates delivery risks; figures are read out of
+the passage being cited, so a claim and its citation cannot drift apart.
+
+**Where no passage supports a section, the drafter writes an
+`[EVIDENCE GAP: ...]` rather than prose about an industry the tender may have
+nothing to do with.** Feeding it a hospital revenue-cycle tender yields evidence
+gaps in Approach, Team, Risks and the Executive Summary — not a lending
+methodology. Two regression tests enforce this.
+
+---
+
+## Cost
+
+The Execution tab reports measured tokens, latency, the local electricity cost
+and the hosted-API equivalent for the same workload, plus a 10,000-user monthly
+projection. Token counts and elapsed time are **measured**; every rate is a
+**declared assumption** shown beside the figures and set in `config.py`
+(see `services/costing.py`).
+
+Running locally the marginal cost is electricity — fractions of a rupee per
+proposal — against a few rupees for the same tokens on a hosted API. The
+trade-off is explicit: hosted is faster and better written; local keeps the
+tender and the firm's evidence inside the tenant.
+
+---
+
+## Known limitations
+
+Stated plainly, because the product's whole claim is that it does not overstate:
+
+- **Retrieval is weak.** TF-IDF barely separates good evidence from bad, so bid
+  fit reads lower than it should. `EMBEDDINGS_BACKEND=sentence-transformers`
+  improves it but needs a model download.
+- **The local model invents citation IDs.** They are all rejected, which is the
+  system working, but a run produces a substantial number of them.
+- **Confidence is not calibrated.** It is a weighted blend of the signals, not a
+  probability, despite being rendered as a bar.
+- **Chunking will mishandle tables.** Fixed-size splitting on headings; real
+  tender eligibility criteria often live in tables.
+- **No prompt-injection boundary.** Tender text reaches the drafting prompt
+  untreated when a model is in use.
+- **The evidence pool admits document-level passages.** A metric-bearing chunk
+  from a selected *document* is made available to the drafter without itself
+  passing the ranker threshold.
+- **The corpus is synthetic**, so the demonstration is illustrative rather than a
+  measurement against independently labelled ground truth.
+
+---
+
+## Backends
 
 | Concern | Default | Alternative |
 |---|---|---|
-| Orchestrator | plain ordered function chain (§0) | — (LangGraph deliberately not used; same audit/demo value) |
-| LLM (extract / plan / draft / decompose) | `LLM_PROVIDER=mock` — deterministic simulation | `LLM_PROVIDER=ollama` + local model for real offline AI; optional `litellm` sends data to a hosted provider |
-| Embeddings | `EMBEDDINGS_BACKEND=tfidf` — scikit-learn, fit on the seeded corpus, no download | `sentence-transformers` (`all-MiniLM-L6-v2`) |
-| Vector store | local numpy matrix, pickle-persisted | ChromaDB (`VECTORSTORE_BACKEND=chroma`) |
-| Web enrichment | `WEB_SEARCH_PROVIDER=mock`, disabled | `tavily` (needs `TAVILY_API_KEY`) or `ddg` (needs `duckduckgo_search`); background context only, never a VCG credential |
+| Orchestrator | plain ordered function chain | — |
+| Generation | `LLM_PROVIDER=mock` (deterministic) | `ollama` for local AI; `litellm` sends data to a hosted provider |
+| Embeddings | `tfidf` — fit on the seeded corpus, no download | `sentence-transformers` |
+| Vector store | local numpy matrix, pickle-persisted | ChromaDB |
+| External context | `mock`, disabled | `tavily` or `ddg` — background only, never cited as firm evidence |
 
-`scripts/calibrate.py` (Phase 0) scores the §15 known-good/known-bad pairs against
-the **real seeded corpus + real embedding backend** and writes
-`SEM_SUPPORTED` / `SEM_PARTIAL` / `LEX_SUPPORTED` into `.env`. With the TF-IDF
-backend the claim↔chunk semantic band is low, so SUPPORTED/GAP decisions lean on
-the numeric / attribution / context rules (C/D/E); the similarity thresholds
-(F/G) are the fallback.
+`scripts/calibrate.py` scores known-good and known-bad pairs against the real
+corpus and embedding backend and writes the verification thresholds into `.env`.
 
 ## Resumability
 
-Every stage writes a lightweight JSON snapshot **and** a full pickled working
-state to SQLite (`run_state`). `pipeline.graph.load_run(run_id)` reopens a run
-with a fully functional state — review, regeneration, and export all continue.
-Review actions re-persist, so a resumed run reflects approval progress. The
-Streamlit sidebar has a **Resume a run** selector.
+Every stage persists a JSON snapshot and a full pickled state to SQLite.
+`pipeline.graph.load_run(run_id)` reopens a run fully working — review,
+regeneration and export all continue. Review actions re-persist, so a reopened
+run reflects approval progress. The sidebar has a **Reopen run** selector.
 
 ## Layout
 
 ```
-config.py                 all thresholds / models / paths (System-Owner-owned)
-models/schemas.py         Pydantic v2 models (SPEC §7)
-state/graph_state.py      ProposalAgentState (SPEC §6)
-data/corpus/*.md          the 10 synthetic KB documents (SPEC §9)
-fixtures/rfp/*.md          the 3 demo RFPs (SPEC §10)
-services/                 corpus loader/chunker · embeddings · vector store · mock LLM · SQLite persistence · text utils
-pipeline/                 one module per stage + graph.py orchestrator + review.py + export.py
-services/real_llm.py      LiteLLM prompts for the 4 delegated ops (mock stays default)
-services/web_search.py    mock / Tavily / DDG providers + VCG-credential guardrail
-scripts/                  seed_corpus · calibrate (Phase 0, writes .env) · run_demo
-tests/                    verifier and approval-gate tests
-app.py                    Streamlit hero screen
+config.py                  thresholds, model routing, cost assumptions, paths
+models/schemas.py          Pydantic v2 models
+state/graph_state.py       ProposalAgentState
+data/corpus/*.md           10 synthetic evidence documents
+data/sample_systems/*.json fictional CRM / HR / rate-card / time-billing inputs
+fixtures/rfp/*.md          4 tenders (happy path, capability gap, procurement, no rubric)
+pipeline/                  one module per stage, plus graph.py, qualification.py,
+                           verification.py, review.py, export.py
+services/                  corpus loader, embeddings, vector store, LLM providers,
+                           costing, persistence, text utilities
+scripts/                   seed_corpus, calibrate, run_demo, record_demo_run
+tests/                     88 tests
+app.py, ui.py              Streamlit interface and design tokens
 ```
 
-## Guarantees (Definition of Done, SPEC §18)
+## Guarantees
 
-- Every extracted requirement carries a locatable source span; ungrounded ones
-  are dropped, not passed downstream.
-- Compound requirements split; procedural items kept in their own checklist;
-  capability gaps explicit and surfaced as a go/no-go.
+- Every extracted requirement carries a locatable source quotation; ungrounded
+  ones are dropped, not passed downstream. A document yielding no requirements
+  stops the run rather than producing a proposal.
 - Selected **and** rejected evidence both carry reasons; conflicts are surfaced,
   never silently resolved.
-- ≥5 proposal sections; each cites only selected evidence; gaps written as
-  `[EVIDENCE GAP: …]`, human-only content as `HUMAN INPUT REQUIRED`.
-- No code path drafts before a recorded practice-lead BID decision. No code path
+- Every citation must resolve to selected evidence — including on
+  forward-looking statements, which need no evidence but may not assert false
+  provenance.
+- No code path drafts before a recorded practice-lead decision. No code path
   exports without every section approved and a partner commercial sign-off;
-  unresolved gaps block export unless overridden with a recorded reason.
-- The system never sends or submits anything externally.
+  unresolved gaps block release unless overridden with a recorded justification.
+- The system never transmits or submits anything externally. Submission remains
+  a manual action outside the platform.
