@@ -327,15 +327,88 @@ def extract_named_entities(text: str) -> list[str]:
     return found
 
 
+# Geography and industry vocabulary. ONE list, used both to extract a claim's
+# qualifiers and to decide whether evidence metadata contradicts them.
+#
+# These were two separate lists that disagreed: the extractor knew ten strings
+# while EvidenceMatch.metadata_contradicts knew four geographic groups. Anything
+# the extractor missed could never be tested, so identical claims against the
+# same Indian case study came out differently -- "a comparable Europe engagement"
+# was caught and downgraded, "a comparable Middle East engagement" was returned
+# SUPPORTED, because "middle east" was simply absent from the extraction catalog.
+# Most of the world was unguarded. Terms added here are extracted and tested in
+# the same step, so the two can no longer drift apart.
+GEO_GROUPS: list[set[str]] = [
+    {"india", "indian", "south asia", "south asian"},
+    {"southeast asia", "southeast asian", "se asia", "south east asia", "asean",
+     "vietnam", "indonesia", "thailand", "philippines", "malaysia", "singapore"},
+    {"europe", "european", "eu", "uk", "united kingdom", "emea", "germany",
+     "france", "switzerland", "swiss", "nordics", "netherlands", "spain", "italy"},
+    {"north america", "us", "usa", "united states", "american", "canada"},
+    {"middle east", "middle eastern", "gulf", "gcc", "uae", "dubai",
+     "saudi arabia", "saudi", "qatar", "kuwait", "bahrain", "oman"},
+    {"africa", "african", "sub-saharan africa", "nigeria", "kenya",
+     "south africa", "egypt", "ghana"},
+    {"latin america", "latam", "south america", "brazil", "mexico",
+     "argentina", "chile", "colombia"},
+    {"china", "chinese", "greater china", "hong kong", "taiwan"},
+    {"japan", "japanese", "korea", "south korea"},
+    {"australia", "australian", "anz", "new zealand"},
+]
+
+IND_GROUPS: list[set[str]] = [
+    {"bank", "banking", "lending", "credit", "financial services", "underwriting",
+     "mortgage", "deposits"},
+    {"supply chain", "logistics", "consumer goods", "cpg", "manufacturing",
+     "distribution", "planning"},
+    {"insurance", "insurer", "actuarial", "reinsurance"},
+    {"telecom", "telecommunications"},
+    {"healthcare", "hospital", "pharma", "pharmaceutical"},
+    {"energy", "utilities", "oil and gas"},
+    {"retail trade", "grocery", "ecommerce", "e-commerce"},
+]
+
+# Segment and channel qualifiers. Not geography or industry, so they are matched
+# but never used to contradict on those axes.
+SEGMENT_TERMS: list[str] = ["sme", "retail", "consumer", "corporate",
+                            "commercial", "wholesale"]
+
+
+def _qualifier_vocabulary() -> list[str]:
+    terms: list[str] = []
+    for group in GEO_GROUPS + IND_GROUPS:
+        terms.extend(group)
+    terms.extend(SEGMENT_TERMS)
+    # longest first, so "southeast asia" is preferred over "asia"-like fragments
+    return sorted(set(terms), key=len, reverse=True)
+
+
+_QUALIFIER_TERMS = _qualifier_vocabulary()
+
+
 def extract_context_qualifiers(text: str) -> list[str]:
-    """Keyword-extracted where/what-kind qualifiers (SPEC Section 15)."""
+    """Keyword-extracted where/what-kind qualifiers (SPEC Section 15).
+
+    Drawn from the same vocabulary the contradiction check uses, so a qualifier
+    that can be contradicted is always one that can be extracted.
+    """
     low = normalize(text)
     quals: list[str] = []
-    catalog = [
-        "india", "indian", "southeast asia", "south asia", "europe", "us",
-        "sme", "retail", "consumer", "corporate",
-    ]
-    for term in catalog:
-        if re.search(rf"\b{re.escape(term)}\b", low):
+    for term in _QUALIFIER_TERMS:
+        if re.search(rf"\b{re.escape(term)}\b", low) and term not in quals:
             quals.append(term)
     return quals
+
+
+def qualifier_group(qualifier: str, groups: list[set[str]]) -> set[str] | None:
+    """The group a qualifier belongs to, matching the longest term first."""
+    q = qualifier.strip().lower()
+    if not q:
+        return None
+    best: tuple[int, set[str]] | None = None
+    for group in groups:
+        for term in group:
+            if re.search(rf"\b{re.escape(term)}\b", q) and (
+                    best is None or len(term) > best[0]):
+                best = (len(term), group)
+    return best[1] if best else None

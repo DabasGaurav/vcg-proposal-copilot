@@ -26,8 +26,13 @@ from services.llm import (
     split_compound,
 )
 import config
+from services.substantiation import (
+    asks_for_delivery_evidence,
+    is_delivery_record,
+)
 from services.text import (
     context_window_tokens,
+    bound_qualifier,
     extract_context_qualifiers,
     extract_named_entities,
     extract_numeric_tokens,
@@ -218,15 +223,32 @@ def plan_response(rfp_data: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # 3. Drafting
 # --------------------------------------------------------------------------- #
-_THRESHOLD_RE = re.compile(
-    r"(?:greater than|more than|over|at least|exceed(?:ing)?|>)\s*(\d+(?:\.\d+)?)\s*(?:percent|%)",
-    re.I,
-)
-
-
 def _threshold_pct(text: str) -> float | None:
-    m = _THRESHOLD_RE.search(text)
-    return float(m.group(1)) if m else None
+    """The percentage bar a requirement sets, if it sets one.
+
+    This had its own digit-only regex while extract_numeric_tokens understood
+    figures written in words, so the two parsers disagreed: "at least 45 percent"
+    was read as a threshold and "more than twenty percent" was not. A word-number
+    bar silently stopped being a bar, and the requirement was drafted as though
+    it set no level at all. Both now go through the one tokeniser, and the
+    comparative qualifier is read by the same helper the verifier uses.
+    """
+    for tok in extract_numeric_tokens(text):
+        if tok.canonical_unit() not in ("percent", "percentage_points"):
+            continue
+        if bound_qualifier(text, tok.start) == "lower":
+            return tok.value
+    return None
+
+
+def _threshold_unit(text: str) -> str:
+    """percent vs percentage_points -- a 15-point gain is not a 15 percent gain."""
+    for tok in extract_numeric_tokens(text):
+        unit = tok.canonical_unit()
+        if unit in ("percent", "percentage_points") and \
+                bound_qualifier(text, tok.start) == "lower":
+            return unit
+    return "percent"
 
 
 _TAT_WORDS = ("turnaround", "tat", "approval time", "cycle time")
@@ -248,12 +270,14 @@ def _figure_is_about(chunk: str, tok, words: tuple[str, ...]) -> bool:
     return any(w in window for w in words)
 
 
-def _evidence_supports_threshold(evidence: list[dict], pct: float) -> bool:
+def _evidence_supports_threshold(evidence: list[dict], pct: float,
+                                 unit: str = "percent",
+                                 words: tuple[str, ...] = _TAT_WORDS) -> bool:
     for ev in evidence:
         chunk = ev["chunk_text"]
         for tok in extract_numeric_tokens(chunk):
-            if (tok.canonical_unit() == "percent" and tok.value >= pct
-                    and _figure_is_about(chunk, tok, _TAT_WORDS)):
+            if (tok.canonical_unit() == unit and tok.value >= pct
+                    and _figure_is_about(chunk, tok, words)):
                 return True
     return False
 
@@ -592,10 +616,32 @@ def draft_section(
                 )
                 emitted_grounded = True
                 continue
-            if ev:
-                top = ev[0]
+            # "VCG has relevant delivery experience: X" was emitted for whatever
+            # ranked first, with no regard for what kind of document X is. On a
+            # core banking tender the only selected passage was METHOD_002, a
+            # diagnostic framework whose own text says it "must not be cited as
+            # evidence that VCG has executed a past lending delivery engagement"
+            # -- and the sentence verified as SUPPORTED, because the title it
+            # quotes is genuinely in the cited chunk. A methodology or a
+            # winning-proposal pattern is not a delivery record, so it cannot
+            # answer a requirement that asks what the firm has done.
+            record = next((e for e in ev if is_delivery_record(e)), None)
+            if record is not None:
                 para.append(
-                    f"VCG has relevant delivery experience: {top['title']}. "
+                    f"VCG has relevant delivery experience: {record['title']}. "
+                    f"[[ev:{record['evidence_id']}]]{rid}"
+                )
+            elif ev and asks_for_delivery_evidence(item["requirement_text"]):
+                kinds = ", ".join(sorted({str(e.get("category") or "UNKNOWN") for e in ev}))
+                para.append(
+                    f"[EVIDENCE GAP: {item['evidence_need']} -- the firm's record "
+                    f"holds {kinds} on this topic, which is not a delivery record]"
+                )
+            elif ev:
+                top = ev[0]
+                kind = str(top.get("category") or "material").lower().replace("_", " ")
+                para.append(
+                    f"VCG's documented {kind} covers this: {top['title']}. "
                     f"[[ev:{top['evidence_id']}]]{rid}"
                 )
             else:

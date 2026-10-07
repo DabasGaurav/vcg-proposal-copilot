@@ -172,39 +172,34 @@ class EvidenceMatch(BaseModel):
 
     def metadata_contradicts(self, qualifier: str) -> bool:
         """True only if the matched evidence's own metadata *contradicts* the
-        qualifier (not merely fails to mention it)."""
+        qualifier (not merely fails to mention it).
+
+        The groups come from services.text, the same vocabulary the extractor
+        uses. They used to be a private copy here that knew four geographic
+        groups while the extractor knew ten strings, so a qualifier this method
+        could have contradicted was often never extracted in the first place.
+        """
+        from services.text import GEO_GROUPS, IND_GROUPS, qualifier_group
+
         q = qualifier.strip().lower()
         if not q:
             return False
         region = str(self.evidence_metadata.get("region", "")).lower()
         industry = str(self.evidence_metadata.get("industry", "")).lower()
         subsector = str(self.evidence_metadata.get("subsector", "")).lower()
-        haystack = " ".join([region, industry, subsector])
+        haystack = " ".join([region, industry, subsector]).replace("_", " ")
         if not haystack.strip():
             return False                      # no metadata => cannot contradict
-        # geography contradictions
-        geo_groups = [
-            {"india", "indian", "south asia"},
-            {"southeast asia", "se asia", "south east asia", "asean", "vietnam",
-             "indonesia", "thailand", "philippines", "malaysia"},
-            {"europe", "eu", "uk", "emea"},
-            {"north america", "us", "usa", "united states"},
-        ]
-        q_group = next((g for g in geo_groups if any(t in q for t in g)), None)
-        if q_group is not None:
-            hay_group = next((g for g in geo_groups if any(t in haystack for t in g)), None)
+        # "global" evidence is not tied to a region, so it contradicts none.
+        for groups, hay in ((GEO_GROUPS, region.replace("_", " ")),
+                            (IND_GROUPS, haystack)):
+            if groups is GEO_GROUPS and hay.strip() in ("", "global"):
+                continue
+            q_group = qualifier_group(q, groups)
+            if q_group is None:
+                continue
+            hay_group = qualifier_group(hay, groups)
             if hay_group is not None and hay_group is not q_group:
-                return True
-        # industry contradictions (banking/lending vs supply-chain etc.)
-        ind_groups = [
-            {"bank", "banking", "lending", "credit", "financial services"},
-            {"supply chain", "logistics", "consumer goods", "cpg", "manufacturing"},
-            {"insurance", "actuarial"},
-        ]
-        q_ind = next((g for g in ind_groups if any(t in q for t in g)), None)
-        if q_ind is not None:
-            hay_ind = next((g for g in ind_groups if any(t in haystack for t in g)), None)
-            if hay_ind is not None and hay_ind is not q_ind:
                 return True
         return False
 

@@ -200,3 +200,85 @@ returns `None` for "more than twenty percent" and "at least fifteen percentage
 points", while `extract_numeric_tokens` handles all four. A word-number threshold
 silently stops being a threshold, so the RFP's bar is never compared to the
 evidence. Safe direction — no fabrication — but the criterion goes unchecked.
+
+---
+
+# All four findings fixed
+
+## 1. Bid/no-bid now scores substantiation, not retrieval
+
+`services/substantiation.py` is the one place that answers "does this evidence
+satisfy this requirement". `pipeline/qualification.py` uses it for both `covered`
+and `mandatory_gaps`, and the drafter uses it too, so the stage that decides
+whether to bid, the stage that writes the prose, and the verifier can no longer
+disagree. A gap carries its reason into `qualification["substantiation_gaps"]`.
+
+| RFP | before | after |
+|---|---|---|
+| apex_aggressive_thresholds | 100 / BID_REVIEW | **0 / REVIEW** |
+| helvetia_core_platform_delivery | 75 / BID_REVIEW | **0 / NO_BID_REVIEW** + mandatory gap raised |
+| gulfstar_word_thresholds | 50 / REVIEW | 0 / REVIEW |
+| abc_bank_lending_transformation | 75 / BID_REVIEW | 50 / REVIEW |
+| merantau_sme_underwriting | 67 / BID_REVIEW | 33 / REVIEW |
+
+**control_satisfiable_lending** is the anti-regression half, added because a gate
+that can only ever say no is useless. Same corpus, same pipeline, a tender asking
+for more than 15 percent turnaround (the record is 18) and more than 20 percent
+handoffs (the record is 30): **fit=100, BID_REVIEW, 3 substantiated claims.** The
+gate discriminates on whether the bar is actually clearable.
+
+The drops on abc_bank and merantau are honest, not collateral. abc_bank asks for
+"greater than 30 percent turnaround-time improvement" and the record is 18
+percent, so half its evidence requirements genuinely are not substantiated.
+
+## 2. Delivery experience requires a delivery record
+
+`is_delivery_record` gates the claim on the document's `category`. A requirement
+asking what the firm has done is answerable only by a `CASE_STUDY`; a methodology
+or winning-proposal pattern now produces an evidence gap that names the mismatch:
+
+    [EVIDENCE GAP: ... -- the firm's record holds METHODOLOGY on this topic,
+     which is not a delivery record]
+
+Helvetia drafts 0 SUPPORTED / 0 PARTIAL / 0 GAP where it previously asserted
+"VCG has relevant delivery experience: Core Banking Diagnostic Framework" twice.
+
+## 3. One geography vocabulary
+
+`GEO_GROUPS` / `IND_GROUPS` / `SEGMENT_TERMS` live in `services/text.py` and feed
+both `extract_context_qualifiers` and `EvidenceMatch.metadata_contradicts`. They
+were two lists that disagreed — the extractor knew ten strings, the contradiction
+check knew four groups — so a qualifier the rule could have caught was often never
+extracted. Against the same Indian case study:
+
+| claim | before | after |
+|---|---|---|
+| "a comparable **Middle East** engagement" | **SUPPORTED** | PARTIAL |
+| "a comparable **Africa** engagement" | **SUPPORTED** | PARTIAL |
+| "a comparable **Latin America** engagement" | **SUPPORTED** | PARTIAL |
+| "a comparable Europe engagement" | PARTIAL | PARTIAL |
+| "a comparable India engagement" | SUPPORTED | SUPPORTED |
+
+A test asserts every term in `GEO_GROUPS` is extractable, so the two cannot drift
+apart again. Evidence tagged `region: global` contradicts no geography.
+
+## 4. One number parser
+
+`requirement_threshold` goes through `extract_numeric_tokens` and the verifier's
+own `bound_qualifier`, so a bar written in words counts the same as one in digits,
+and a percentage-point bar stays distinct from a percent one.
+
+| requirement | before | after |
+|---|---|---|
+| "at least 45 percent" | 45.0 | 45.0 |
+| "more than twenty percent" | **None** | 20.0 |
+| "at least fifteen percentage points" | **None** | 15.0 percentage_points |
+
+## Verification after the fixes
+
+- **184 tests pass** (was 160; 24 new in `tests/test_substantiation_gate.py`)
+- `scripts/stress_test.py` 21/21
+- Approval and export gates: 0 failures
+- All 10 RFPs clean on every invariant, now including **H8**: no SUPPORTED
+  delivery-experience claim may cite a non-case-study
+- The 18 / 35 percent result unchanged

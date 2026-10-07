@@ -12,6 +12,7 @@ import json
 import config
 
 from models.schemas import RequirementHandling
+from services.substantiation import substantiation_gap
 from state.graph_state import ProposalAgentState
 
 
@@ -29,10 +30,25 @@ def run(state: ProposalAgentState) -> ProposalAgentState:
         if item.handling in (RequirementHandling.NEEDS_EVIDENCE,
                              RequirementHandling.CAPABILITY_GAP)
     ]
-    covered = [item for item in evidence_items if state["selected_evidence"].get(item.checklist_id)]
+    # "Covered" means the selected evidence SUBSTANTIATES the requirement, not
+    # merely that retrieval returned something for it. Scoring retrieval made the
+    # bid decision meaningless: a tender demanding at least 45 percent scored
+    # 100/100 against a case study recording 18 percent, and a MANDATORY
+    # requirement for a delivered core banking replacement was satisfied by a
+    # methodology document that says in its own text it must not be cited as
+    # delivery evidence. Both were recommended as BID_REVIEW.
+    substantiation: dict[str, str | None] = {
+        item.checklist_id: substantiation_gap(
+            item.requirement_text,
+            state["selected_evidence"].get(item.checklist_id) or [],
+        )
+        for item in evidence_items
+    }
+    covered = [item for item in evidence_items
+               if substantiation[item.checklist_id] is None]
     mandatory_gaps = [
         item for item in evidence_items
-        if not state["selected_evidence"].get(item.checklist_id)
+        if substantiation[item.checklist_id] is not None
         and (requirements[item.requirement_id].mandatory is True
              or item.handling == RequirementHandling.CAPABILITY_GAP)
     ]
@@ -54,6 +70,10 @@ def run(state: ProposalAgentState) -> ProposalAgentState:
         "evidence_requirements": len(evidence_items),
         "covered_requirements": len(covered),
         "mandatory_gap_ids": [item.requirement_id for item in mandatory_gaps],
+        "substantiation_gaps": {
+            item.requirement_id: substantiation[item.checklist_id]
+            for item in evidence_items if substantiation[item.checklist_id]
+        },
         "recommendation": recommendation,
         "reason": reason,
         "crm_opportunity_id": sample_inputs.get("crm_opportunity", {}).get("opportunity_id"),
