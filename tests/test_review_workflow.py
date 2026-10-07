@@ -72,3 +72,33 @@ def test_system_never_sends_anything_externally():
     text = open(src).read()
     for banned in ("requests.post", "smtplib", "urllib.request.urlopen", "httpx"):
         assert banned not in text
+
+
+def test_price_signoff_requires_a_bid_decision_first(abc_state):
+    """Qualification gates the whole pipeline, commercial sign-off included."""
+    from pipeline.graph import run_pipeline
+
+    import config
+    from pipeline import review
+
+    unqualified = run_pipeline(
+        str(config.FIXTURE_DIR / "abc_bank_lending_transformation.md"),
+        run_id="test-no-bid", persist=False,
+    )
+    assert not (unqualified.get("practice_lead_decision") or {}).get("decision")
+    with pytest.raises(PermissionError):
+        review.approve_price(unqualified, "Partner", "REF-1", "looks fine")
+
+
+@pytest.mark.parametrize("reviewer,reference,note", [
+    ("", "REF-1", "reviewed"),
+    ("   ", "REF-1", "reviewed"),
+    ("Partner", "", "reviewed"),
+    ("Partner", "REF-1", ""),
+])
+def test_price_signoff_rejects_blank_attribution(abc_state, reviewer, reference, note):
+    """An unattributed sign-off is not a sign-off."""
+    from pipeline import review
+
+    with pytest.raises(ValueError):
+        review.approve_price(abc_state, reviewer, reference, note)
