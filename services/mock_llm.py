@@ -668,7 +668,17 @@ _ACHIEVEMENT_RE = re.compile(
 # operates in 40 countries" previously classified as not-requiring-verification,
 # so an unsupported credential could reach an approved proposal unchecked --
 # exactly the failure the product exists to prevent.
-_FIRM_SUBJECT_RE = re.compile(r"\b(vcg|we|our firm|the firm)\b", re.I)
+# Sentences that talk about the proposal rather than asserting anything about
+# the firm. These are the genuine exemptions; everything else a firm says about
+# itself is a claim.
+_FRAMING_RE = re.compile(
+    r"\b(rfp|tender|this proposal|this response|this section|this document|"
+    r"set out|outlined|as follows|reflected below|our understanding|have read|"
+    r"sections that follow|described in)\b",
+    re.I,
+)
+
+_FIRM_SUBJECT_RE = re.compile(r"\b(vcg|we|our|the firm|the team)\b", re.I)
 _CREDENTIAL_RE = re.compile(
     r"\b(certifie[ds]|certification|accredit\w*|attestation|iso\s*\d+|soc\s*2|"
     r"licen[cs]ed?|registered|member of|ranked|awarded|award|partner of|"
@@ -717,12 +727,18 @@ def decompose_claims(section_title: str, section_markdown: str) -> list[dict]:
             # named person tied to a number. A bare number that just restates the
             # RFP ("delivered within 12 weeks") is framing, not a claim.
             firm_subject = bool(_FIRM_SUBJECT_RE.search(frag))
-            credential = bool(_CREDENTIAL_RE.search(frag))
+            framing = bool(_FRAMING_RE.search(frag))
+            # Default to checking. An allow-list of achievement verbs meant any
+            # assertion phrased outside it -- "VCG owns proprietary software",
+            # "VCG was founded by former regulators" -- was exempted from
+            # verification rather than flagged as unsupported, which is the exact
+            # failure this product exists to prevent. Anything a firm states
+            # about itself is a claim unless it is prospective or is describing
+            # the proposal document itself.
             historical = (
-                (achievement and ("vcg" in low or numeric or entities))
+                (firm_subject and not framing)
                 or (bool(entities) and bool(numeric))
-                # a credential or a hard count asserted about the firm
-                or (firm_subject and (credential or bool(numeric)))
+                or (achievement and (numeric or entities))
             )
             requires_verification = bool(historical and not prospective)
             out.append(

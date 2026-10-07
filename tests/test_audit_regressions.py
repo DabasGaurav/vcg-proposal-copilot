@@ -233,3 +233,46 @@ def test_a_cited_passage_is_always_one_the_ranker_selected():
             tail = row.matched_evidence_id.split("::", 1)[-1].replace("POOL::", "")
             assert tail in ranked or any(tail in c for c in ranked), (
                 f"claim cites {row.matched_evidence_id}, which the ranker never selected")
+
+
+# --- unrecognised factual assertions must not be exempt from checking -------
+@pytest.mark.parametrize("sentence", [
+    "VCG owns proprietary clinical diagnostic software.",
+    "VCG pioneered the operating-model approach used across the sector.",
+    "Our platform integrates directly with every major core banking system.",
+    "VCG was founded by former regulators.",
+])
+def test_any_assertion_about_the_firm_is_checked(sentence):
+    """Verification keyed off an allow-list of achievement verbs, so an
+    assertion phrased outside it was EXEMPTED rather than flagged as
+    unsupported. Adding more verbs does not close that; the default has to be
+    to check."""
+    claims = decompose_claims("Relevant Experience & Credentials", sentence)
+    assert claims and all(c["requires_verification"] for c in claims), sentence
+
+
+@pytest.mark.parametrize("sentence", [
+    "We have read the RFP in full and our understanding is reflected below.",
+    "We propose a phased engagement reaching a measured pilot.",
+    "In weeks 4 to 7 we will redesign the workflow and operating model.",
+])
+def test_prospective_and_framing_sentences_stay_exempt(sentence):
+    """Inverting the default must not turn the proposal's own scaffolding into
+    unsupported claims."""
+    claims = decompose_claims("Proposed Approach & Workplan", sentence)
+    assert not any(c["requires_verification"] for c in claims), sentence
+
+
+def test_an_unsupported_assertion_blocks_release():
+    """End to end: an invented credential inserted by amendment must stop the
+    export gate, not slip through as unverifiable."""
+    st = run_pipeline(str(config.FIXTURE_DIR / "abc_bank_lending_transformation.md"),
+                      persist=False)
+    record_decision(st, "BID", "lead", "proceed")
+    st = continue_approved_pipeline(st, persist=False)
+    review.apply_human_edit(
+        st, "Relevant Experience & Credentials",
+        "VCG owns proprietary clinical diagnostic software.")
+    assert any(r.verification_status == VerificationStatus.GAP
+               and "proprietary clinical" in r.claim_text
+               for r in st["overall_traceability"])

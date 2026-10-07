@@ -61,7 +61,7 @@ Python 3.11+.
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python scripts/seed_corpus.py      # build the evidence index from data/corpus/
-pytest -q                          # 112 tests
+pytest -q                          # 120 tests
 streamlit run app.py
 ```
 
@@ -247,7 +247,7 @@ pipeline/                  one module per stage, plus graph.py, qualification.py
 services/                  corpus loader, embeddings, vector store, LLM providers,
                            costing, persistence, text utilities
 scripts/                   seed_corpus, calibrate, run_demo, record_demo_run
-tests/                     112 tests
+tests/                     120 tests
 app.py, ui.py              Streamlit interface and design tokens
 ```
 

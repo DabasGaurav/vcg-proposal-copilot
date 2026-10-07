@@ -197,7 +197,17 @@ numbers or names."""
 # operates in 40 countries" previously classified as not-requiring-verification,
 # so an unsupported credential could reach an approved proposal unchecked --
 # exactly the failure the product exists to prevent.
-_FIRM_SUBJECT_RE = re.compile(r"\b(vcg|we|our firm|the firm)\b", re.I)
+# Sentences that talk about the proposal rather than asserting anything about
+# the firm. These are the genuine exemptions; everything else a firm says about
+# itself is a claim.
+_FRAMING_RE = re.compile(
+    r"\b(rfp|tender|this proposal|this response|this section|this document|"
+    r"set out|outlined|as follows|reflected below|our understanding|have read|"
+    r"sections that follow|described in)\b",
+    re.I,
+)
+
+_FIRM_SUBJECT_RE = re.compile(r"\b(vcg|we|our|the firm|the team)\b", re.I)
 _CREDENTIAL_RE = re.compile(
     r"\b(certifie[ds]|certification|accredit\w*|attestation|iso\s*\d+|soc\s*2|"
     r"licen[cs]ed?|registered|member of|ranked|awarded|award|partner of|"
@@ -237,10 +247,10 @@ def decompose_claims(section_title: str, section_markdown: str, *, complete=None
             prospective = mock_llm.is_prospective(frag)
             achievement = bool(mock_llm._ACHIEVEMENT_RE.search(frag))
             firm_subject = bool(_FIRM_SUBJECT_RE.search(frag))
-            credential = bool(_CREDENTIAL_RE.search(frag))
-            historical = ((achievement and ("vcg" in low or numeric or entities))
+            framing = bool(_FRAMING_RE.search(frag))
+            historical = ((firm_subject and not framing)
                           or (bool(entities) and bool(numeric))
-                          or (firm_subject and (credential or bool(numeric))))
+                          or (achievement and (numeric or entities)))
             out.append({
                 "claim_id": f"CLM-{section_title[:3].upper()}-{n:03d}",
                 "section_name": section_title,
