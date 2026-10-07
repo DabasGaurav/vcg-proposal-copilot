@@ -61,7 +61,7 @@ Python 3.11+.
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python scripts/seed_corpus.py      # build the evidence index from data/corpus/
-pytest -q                          # 110 tests
+pytest -q                          # 112 tests
 streamlit run app.py
 ```
 
@@ -208,9 +208,6 @@ Stated plainly, because the product's whole claim is that it does not overstate:
   tender eligibility criteria often live in tables.
 - **No prompt-injection boundary.** Tender text reaches the drafting prompt
   untreated when a model is in use.
-- **The evidence pool admits document-level passages.** A metric-bearing chunk
-  from a selected *document* is made available to the drafter without itself
-  passing the ranker threshold.
 - **The corpus is synthetic**, so the demonstration is illustrative rather than a
   measurement against independently labelled ground truth.
 
@@ -250,7 +247,7 @@ pipeline/                  one module per stage, plus graph.py, qualification.py
 services/                  corpus loader, embeddings, vector store, LLM providers,
                            costing, persistence, text utilities
 scripts/                   seed_corpus, calibrate, run_demo, record_demo_run
-tests/                     110 tests
+tests/                     112 tests
 app.py, ui.py              Streamlit interface and design tokens
 ```
 

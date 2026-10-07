@@ -201,3 +201,35 @@ def test_a_stale_sign_off_can_be_given_again():
 
     review.approve_price(st, "partner", "quote-002", "re-checked after revision")
     assert review.commercial_approval_current(st)
+
+
+# --- evidence pool must not smuggle unranked passages to the drafter --------
+def test_every_passage_offered_to_the_drafter_cleared_the_ranker():
+    """The pool promoted each selected document's metric-bearing chunk straight
+    from the index, marked it selected, and gave it a relevance score borrowed
+    from a DIFFERENT chunk. "Cites only selected evidence" then held at document
+    level but not at passage level."""
+    st = run_pipeline(str(config.FIXTURE_DIR / "abc_bank_lending_transformation.md"),
+                      persist=False)
+    record_decision(st, "BID", "lead", "proceed")
+    st = continue_approved_pipeline(st, persist=False)
+
+    for ev in st["selected_evidence"]["__pool__"]:
+        assert ev.relevance_score >= config.SELECT_THRESHOLD, (
+            f"{ev.evidence_id} reached the drafter with score "
+            f"{ev.relevance_score:.3f}, below the selection threshold")
+        assert ev.reasoning, f"{ev.evidence_id} carries no selection rationale"
+
+
+def test_a_cited_passage_is_always_one_the_ranker_selected():
+    st = run_pipeline(str(config.FIXTURE_DIR / "abc_bank_lending_transformation.md"),
+                      persist=False)
+    record_decision(st, "BID", "lead", "proceed")
+    st = continue_approved_pipeline(st, persist=False)
+
+    ranked = {e.chunk_id for evs in st["selected_evidence"].values() for e in evs}
+    for row in st["overall_traceability"]:
+        if row.matched_evidence_id:
+            tail = row.matched_evidence_id.split("::", 1)[-1].replace("POOL::", "")
+            assert tail in ranked or any(tail in c for c in ranked), (
+                f"claim cites {row.matched_evidence_id}, which the ranker never selected")

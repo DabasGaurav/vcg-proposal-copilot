@@ -8,6 +8,7 @@ human-only content => ``HUMAN INPUT REQUIRED``.
 """
 from __future__ import annotations
 
+import config
 from models.schemas import EvidenceItem
 from services.llm import get_llm
 from services.text import extract_numeric_tokens
@@ -30,22 +31,34 @@ def _evidence_payload(evs) -> list[dict]:
 
 
 def _build_section_pool(state: ProposalAgentState) -> list[EvidenceItem]:
-    """Union of all selected evidence, plus -- for every selected source document
-    -- that document's most metric-dense chunk fetched straight from the KB.
+    """Selected evidence, plus the metric-bearing chunk of each selected source --
+    but only where that chunk clears the ranker on its own merits.
 
-    This is what lets the drafter cite the *exact* chunk that carries a metric
-    (e.g. CASE_BANK_001's "18 percent" results chunk) so the deterministic
-    verifier checks the claim against the chunk it was actually drawn from, not a
-    neighbouring intro paragraph.
+    The drafter needs the passage that actually carries a figure, because the
+    ranker may have selected a neighbouring intro paragraph from the same
+    document. Promoting it unscored was a real bypass: the chunk was marked
+    selected and handed a relevance score borrowed from a DIFFERENT chunk, so
+    "cites only selected evidence" held at document level and not at passage
+    level. Each candidate is now scored with the same weighted formula and the
+    same threshold the ranker uses, and is dropped if it does not clear them.
     """
+    from pipeline.ranking import _metadata_match, _wanted_tags
+    from services.text import lexical_overlap
     from services.vectorstore import VectorStore
 
     pool: dict[str, EvidenceItem] = {}
     selected_sources: dict[str, EvidenceItem] = {}
-    for evs in state["selected_evidence"].values():
+    queries: dict[str, str] = {}
+    checklist_by_id = {c.checklist_id: c for c in state["checklist"]}
+    for cid, evs in state["selected_evidence"].items():
+        item = checklist_by_id.get(cid)
         for e in evs:
             pool.setdefault(e.chunk_id, e)
-            selected_sources.setdefault(e.source_id, e)
+            if e.source_id not in selected_sources:
+                selected_sources[e.source_id] = e
+                if item is not None:
+                    queries[e.source_id] = (f"{item.requirement_text} "
+                                            f"{item.evidence_need}")
 
     try:
         store = VectorStore.load()
@@ -62,20 +75,43 @@ def _build_section_pool(state: ProposalAgentState) -> list[EvidenceItem]:
             if n > best_n:
                 best_n = n
                 best_chunk = ch
-        if best_chunk is not None and best_n > 0 and best_chunk.chunk_id not in pool:
-            pool[best_chunk.chunk_id] = EvidenceItem(
-                evidence_id=f"POOL::{best_chunk.chunk_id}",
-                source_id=source_id,
-                title=template.title,
-                category=template.category,
-                chunk_id=best_chunk.chunk_id,
-                chunk_text=best_chunk.text,
-                source_path=best_chunk.source_path,
-                relevance_score=template.relevance_score,
-                selected=True,
-                metadata=dict(best_chunk.metadata),
-                reasoning="section evidence pool: metric-bearing chunk of a selected source",
-            )
+        if best_chunk is None or best_n <= 0 or best_chunk.chunk_id in pool:
+            continue
+
+        # Score the candidate exactly as the ranker would, against the need that
+        # put its document in play.
+        query = queries.get(source_id)
+        if not query:
+            continue
+        semantic = float(store.semantic_similarity(query, best_chunk.text))
+        lexical = lexical_overlap(query, best_chunk.text)
+        wanted = _wanted_tags(query)
+        meta_match = _metadata_match(wanted, best_chunk.metadata)
+        score = (config.W_SEMANTIC * semantic
+                 + config.W_LEXICAL * lexical
+                 + config.W_METADATA * meta_match)
+        if score < config.SELECT_THRESHOLD:
+            continue                       # does not clear the bar; not admitted
+
+        pool[best_chunk.chunk_id] = EvidenceItem(
+            evidence_id=f"POOL::{best_chunk.chunk_id}",
+            source_id=source_id,
+            title=template.title,
+            category=template.category,
+            chunk_id=best_chunk.chunk_id,
+            chunk_text=best_chunk.text,
+            source_path=best_chunk.source_path,
+            relevance_score=max(0.0, min(1.0, score)),
+            semantic_score=semantic,
+            lexical_score=lexical,
+            metadata_match_score=meta_match,
+            selected=True,
+            metadata=dict(best_chunk.metadata),
+            reasoning=(f"metric-bearing passage of a selected source; scored "
+                       f"against the same need: semantic {semantic:.2f}, lexical "
+                       f"{lexical:.2f}, metadata {meta_match:.2f} -> {score:.2f} "
+                       f"(threshold {config.SELECT_THRESHOLD:.2f})"),
+        )
     return list(pool.values())
 
 
