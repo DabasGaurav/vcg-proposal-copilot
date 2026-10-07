@@ -38,17 +38,25 @@ def run(state: ProposalAgentState) -> ProposalAgentState:
     conflicts: list[EvidenceConflict] = []
     cid = 0
 
-    # superseded
+    # superseded. This used to fire only when the successor was ALSO retrieved,
+    # which is the rare case -- retrieval returns top-k, so the usual outcome was
+    # that a document declaring itself out of date was drafted from in silence.
+    # A document's own metadata saying it has been replaced is reason enough to
+    # flag it; whether the replacement was retrieved only changes the wording.
     present_docs = {e.source_id for e in evs}
     for e in evs:
-        if e.superseded_by and e.superseded_by in present_docs:
+        if e.superseded_by and e.superseded_by not in (None, "", "none"):
             cid += 1
+            also_here = e.superseded_by in present_docs
+            where = ("which is also in the evidence set" if also_here
+                     else "which was NOT retrieved, so the superseding figures were "
+                          "never seen")
             conflicts.append(EvidenceConflict(
                 conflict_id=f"CONF-{cid:03d}",
                 evidence_ids=[e.evidence_id],
                 conflict_type="superseded",
                 description=f"{e.source_id} is superseded by {e.superseded_by}, "
-                            f"which is also in the evidence set.",
+                            f"{where}.",
             ))
 
     # attribution: same person, different tenure

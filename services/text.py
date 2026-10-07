@@ -9,6 +9,16 @@ import re
 
 _WS = re.compile(r"\s+")
 _PUNCT = re.compile(r"[^\w%.\-/$ ]+")
+# A "." is kept so decimals survive ("18.2"), but a sentence-final period was
+# kept too, and it rode along on the token: "percent." never matched the
+# stop-word or generic-near-number sets, and "baseline." never matched
+# "baseline". That understated lexical overlap in both directions and -- worse --
+# left "percent." as a shared token that satisfied the distractor guard on its
+# own, so a figure quoted from an unrelated metric passed the context rule. A
+# period only survives between two digits. The same applied to a hyphen:
+# "turnaround-time" shared nothing with "turnaround time".
+_DOT_NOT_DECIMAL = re.compile(r"(?<!\d)\.|\.(?!\d)")
+_HYPHEN_IN_WORD = re.compile(r"(?<=[a-z])-(?=[a-z])")
 
 # Common English stop-words -- kept small on purpose; lexical overlap is meant to
 # reward shared *significant* tokens.
@@ -27,6 +37,8 @@ def normalize(text: str) -> str:
         return ""
     t = text.lower().replace("’", "'").replace("–", "-").replace("—", "-")
     t = _PUNCT.sub(" ", t)
+    t = _DOT_NOT_DECIMAL.sub(" ", t)
+    t = _HYPHEN_IN_WORD.sub(" ", t)
     t = _WS.sub(" ", t)
     return t.strip()
 
@@ -94,8 +106,47 @@ def is_locatable(quote: str, haystack: str, *, min_ratio: float = 0.82) -> bool:
 # both parsed as the value 2 and compared equal.
 _NUMBER = r"\d{1,3}(?:,\d{2,3})+(?:\.\d+)?|\d+(?:\.\d+)?"
 
+# A figure written in words produced NO numeric token, so the numeric rule
+# reported "not applicable" and the claim was judged on similarity alone --
+# "reduced turnaround time by thirty-five percent" passed against evidence of
+# 18 percent. Same failure as the "%" symbol bug, different spelling.
+_ONES = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+         "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+         "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+         "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+         "nineteen": 19}
+_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fourty": 40, "fifty": 50,
+         "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90}
+_WORD_NUM = re.compile(
+    r"\b(?:(?P<tens>" + "|".join(_TENS) + r")(?:[-\s](?P<ones>"
+    + "|".join(_ONES) + r"))?|(?P<single>" + "|".join(_ONES) + r"))\b", re.I)
+
+
+def _word_value(m: re.Match) -> float:
+    gd = m.groupdict()
+    if gd.get("single"):
+        return float(_ONES[gd["single"].lower()])
+    total = _TENS[gd["tens"].lower()]
+    if gd.get("ones"):
+        total += _ONES[gd["ones"].lower()]
+    return float(total)
+
+
+def _digitise_words(text: str) -> str:
+    """Rewrite word-numbers as digits, preserving character offsets so the
+    context-window rule still points at the right span."""
+    out = list(text)
+    for m in _WORD_NUM.finditer(text):
+        digits = f"{_word_value(m):g}"
+        span = m.end() - m.start()
+        if len(digits) > span:          # cannot fit; leave it alone
+            continue
+        repl = digits.rjust(span)       # pad left so end offset is unchanged
+        out[m.start():m.end()] = repl
+    return "".join(out)
+
 _NUM_PATTERNS = [
-    re.compile(rf"(?P<val>{_NUMBER})\s*(?P<unit>percentage points|percent|pp\b|%)", re.I),
+    re.compile(rf"(?P<val>{_NUMBER})\s*(?P<unit>percentage points?|percent|pp\b|%)", re.I),
     re.compile(rf"(?P<cur>[$₹€£]|\b(?:rs|inr|usd|eur|gbp)\.?)\s*(?P<val>{_NUMBER})\s*"
                r"(?P<scale>k\b|m\b|bn\b|billion|million|thousand|crore|lakh|lac)?", re.I),
     re.compile(rf"(?P<val>{_NUMBER})\s*(?P<unit>weeks?|months?|days?|years?)\b", re.I),
@@ -142,7 +193,12 @@ class NumericToken:
 
     def canonical_unit(self) -> str:
         u = self.unit.lower().strip()
-        if u in {"%", "percent", "percentage points", "pp", "points", "point"}:
+        # "18 percentage points" is not "18 percent": on a 40 percent base one is
+        # a 45 percent relative change and the other is 18. Conflating them let a
+        # claim of 18 percentage points verify against evidence of 18 percent.
+        if u in {"percentage points", "percentage point", "pp", "points", "point"}:
+            return "percentage_points"
+        if u in {"%", "percent", "percentage"}:
             return "percent"
         if u.startswith("week"):
             return "weeks"
@@ -163,6 +219,9 @@ class NumericToken:
 def extract_numeric_tokens(text: str) -> list[NumericToken]:
     out: list[NumericToken] = []
     claimed: list[tuple[int, int]] = []
+    # Offsets are preserved by _digitise_words, so spans still index into ``text``
+    # for the context-window and direction checks.
+    text = _digitise_words(text)
 
     def _overlaps(a: int, b: int) -> bool:
         return any(a < end and start < b for start, end in claimed)
@@ -191,6 +250,30 @@ def extract_numeric_tokens(text: str) -> list[NumericToken]:
                                     scale=scale))
     out.sort(key=lambda t: t.start)
     return out
+
+
+# A comparative qualifier changes what a figure asserts. "more than 18 percent"
+# is not established by evidence of exactly 18 percent -- it is a strictly
+# stronger claim -- but the matcher compared bare magnitudes and called it
+# consistent, which is the single easiest way to inflate a real result.
+_LOWER_BOUND = ("more than", "greater than", "over", "at least", "in excess of",
+                "upwards of", "exceeding", "above", "north of", "better than")
+_UPPER_BOUND = ("up to", "less than", "fewer than", "under", "below", "at most",
+                "no more than", "within")
+
+
+def bound_qualifier(text: str, start: int) -> str | None:
+    """'lower', 'upper' or None for the qualifier attached to the figure at
+    ``start``. Looks only at the few words immediately before it."""
+    prefix = text[:start].lower()
+    tail = " ".join(prefix.split()[-4:])
+    for phrase in _LOWER_BOUND:
+        if tail.endswith(phrase) or tail.endswith(phrase + " a") or f"{phrase} " in tail[-len(phrase) - 8:]:
+            return "lower"
+    for phrase in _UPPER_BOUND:
+        if tail.endswith(phrase) or tail.endswith(phrase + " a") or f"{phrase} " in tail[-len(phrase) - 8:]:
+            return "upper"
+    return None
 
 
 def numbers_match(claim_val: float, ev_val: float, *, abs_tol: float = 0.5) -> bool:

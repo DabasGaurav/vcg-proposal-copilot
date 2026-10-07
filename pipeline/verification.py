@@ -20,6 +20,7 @@ from models.schemas import (
     VerificationStatus,
 )
 from services.text import (
+    bound_qualifier,
     context_window_tokens,
     extract_numeric_tokens,
     lexical_overlap,
@@ -121,6 +122,21 @@ def _same_magnitude(cn, en) -> bool:
     return numbers_match(cn.value, en.value, abs_tol=config.NUMERIC_ABS_TOLERANCE)
 
 
+def _bound_satisfied(claim_bound: str | None, evidence_bound: str | None) -> bool:
+    """A comparative qualifier on the claim must be carried by the evidence too.
+
+    "VCG reduced turnaround time by more than 18 percent" is a strictly stronger
+    assertion than the measured "reduced by 18 percent", and comparing bare
+    magnitudes called the two consistent -- the easiest possible way to inflate a
+    real result while keeping a valid citation. An unqualified claim against
+    bounded evidence is fine: if the record says "at least 18 percent", stating
+    18 percent is not an overstatement.
+    """
+    if claim_bound is None:
+        return True
+    return claim_bound == evidence_bound
+
+
 def numeric_consistency(claim_text: str, evidence_text: str) -> bool | None:
     """None  -> claim has no numeric token (check not applicable).
     True  -> every numeric token in the claim has a rounding-tolerant match in
@@ -135,10 +151,12 @@ def numeric_consistency(claim_text: str, evidence_text: str) -> bool | None:
     for cn in claim_nums:
         same_unit = [en for en in ev_nums if en.canonical_unit() == cn.canonical_unit()]
         claim_dir = _direction(claim_text, cn)
+        claim_bound = bound_qualifier(claim_text, cn.start)
         ok = any(
             _same_magnitude(cn, en)
             and _context_agrees(claim_text, evidence_text, en)
             and not (claim_dir and (ed := _direction(evidence_text, en)) and ed != claim_dir)
+            and _bound_satisfied(claim_bound, bound_qualifier(evidence_text, en.start))
             for en in same_unit
         )
         if not ok:
@@ -167,6 +185,27 @@ def attribution_consistent(claim: AtomicClaim, evidence_text: str) -> bool:
         if not any(numbers_match(y, truth, abs_tol=0.0) for y in claim_years):
             return False
     return True
+
+
+# --------------------------------------------------------------------------- #
+# Universal quantifiers
+# --------------------------------------------------------------------------- #
+# A single engagement record cannot establish a property of every engagement.
+# "VCG has reduced turnaround time by 18 percent for every lending client" cites
+# one true case study, matches on the figure, and was returned SUPPORTED -- the
+# quantifier turns a verifiable result into an unverifiable generalisation.
+_UNIVERSAL_RE = re.compile(
+    r"\b(every|all|each|any)\s+(?:\w+\s+){0,2}"
+    r"(client|clients|engagement|engagements|bank|banks|project|projects|"
+    r"mandate|mandates|case|cases|customer|customers)\b"
+    r"|\b(always|without exception|in every case|in all cases|invariably|"
+    r"universally|100 percent of)\b",
+    re.I,
+)
+
+
+def generalises_beyond_evidence(claim: AtomicClaim) -> bool:
+    return bool(_UNIVERSAL_RE.search(claim.claim_text))
 
 
 # --------------------------------------------------------------------------- #
@@ -220,6 +259,10 @@ def decide(claim: AtomicClaim, m: EvidenceMatch) -> VerificationStatus:
         return VerificationStatus.GAP                       # Rule D
     if context_mismatch(claim, m):
         return VerificationStatus.PARTIAL                   # Rule E
+    if generalises_beyond_evidence(claim):
+        # One cited passage cannot carry "for every client". The figure may be
+        # right, so this is a review item rather than an outright gap.
+        return VerificationStatus.PARTIAL
     if (m.semantic_similarity >= config.SEM_SUPPORTED
             and m.lexical_overlap >= config.LEX_SUPPORTED
             and m.numeric_match is not False):
@@ -262,6 +305,9 @@ def reason_string(claim: AtomicClaim, m: EvidenceMatch, status: VerificationStat
         bits.append("attribution=" + ("valid" if m.attribution_valid else "MISMATCH"))
     if m.context_mismatch:
         bits.append("context=geography/industry qualifier contradicted by evidence metadata")
+    if generalises_beyond_evidence(claim):
+        bits.append("scope=claim generalises to every client/engagement; one cited "
+                    "passage cannot establish that")
     if m.conflict_flag:
         bits.append("conflict=evidence flagged; cannot auto-resolve to SUPPORTED")
     return f"{status.value}: " + "; ".join(bits)
